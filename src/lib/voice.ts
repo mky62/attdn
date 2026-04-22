@@ -17,6 +17,7 @@ let recognition: any = null;
 
 const OPENROUTER_AUDIO_MODEL =
   import.meta.env.VITE_OPENROUTER_AUDIO_MODEL?.trim() || 'openai/gpt-4o';
+const FORCE_AI_VOICE = import.meta.env.VITE_FORCE_AI_VOICE === 'true';
 
 // ── Text-to-Speech ──────────────────────────────────────────────────────
 
@@ -57,9 +58,55 @@ export function repeatStudentName(name: string): Promise<void> {
 const PRESENT_WORDS = ['present', 'yes', 'here', 'yeah', 'yep', 'hai', 'haan', 'present mam', 'present sir'];
 const ABSENT_WORDS = ['absent', 'not here', 'gone', 'nahi', 'absent mam', 'absent sir'];
 
-function interpretResponse(transcript: string): AttendanceStatus {
+function normalizeName(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function transcriptMatchesStudent(transcript: string, expectedStudentName: string): boolean {
+  const normalizedTranscript = normalizeName(transcript);
+  const normalizedExpected = normalizeName(expectedStudentName);
+
+  if (!normalizedTranscript || !normalizedExpected) {
+    return false;
+  }
+
+  if (normalizedTranscript.includes(normalizedExpected)) {
+    return true;
+  }
+
+  const transcriptTokens = normalizedTranscript.split(' ');
+  const expectedTokens = normalizedExpected.split(' ').filter((token) => token.length > 1);
+  if (expectedTokens.length === 0) {
+    return false;
+  }
+
+  const matchedTokens = expectedTokens.filter((token) => transcriptTokens.includes(token));
+  if (matchedTokens.length === expectedTokens.length) {
+    return true;
+  }
+
+  if (expectedTokens.length > 1 && matchedTokens.length >= Math.max(1, expectedTokens.length - 1)) {
+    return true;
+  }
+
+  return expectedTokens.some((token) => token.length >= 3 && normalizedTranscript.includes(token));
+}
+
+function interpretResponse(transcript: string, expectedStudentName: string): AttendanceStatus {
   const lower = transcript.toLowerCase().trim();
-  if (!lower) return 'silence';
+  if (!lower) {
+    return 'silence';
+  }
+
+  if (transcriptMatchesStudent(transcript, expectedStudentName)) {
+    return 'present';
+  }
 
   for (const word of PRESENT_WORDS) {
     if (lower.includes(word)) return 'present';
@@ -135,7 +182,7 @@ export async function getVoiceCapabilities(): Promise<{
   aiFallbackAvailable: boolean;
 }> {
   return {
-    browserRecognitionAvailable: Boolean(getSpeechRecognition()),
+    browserRecognitionAvailable: !FORCE_AI_VOICE && Boolean(getSpeechRecognition()),
     aiFallbackAvailable: Boolean(await getOptionalApiKey()),
   };
 }
@@ -165,6 +212,7 @@ function getSpeechRecognition(): any {
 function startBrowserListening(
   onResult: ResultHandler,
   silenceTimeout: number,
+  expectedStudentName: string,
 ): { stop: () => void; mode: ListenMode } {
   const SpeechRecognitionCtor = getSpeechRecognition();
   if (!SpeechRecognitionCtor) {
@@ -245,7 +293,7 @@ function startBrowserListening(
     const transcript = event.results?.[0]?.[0]?.transcript ?? '';
     cleanup();
     onResult({
-      status: interpretResponse(transcript),
+      status: interpretResponse(transcript, expectedStudentName),
       mode: 'browser',
       transcript,
     });
@@ -373,7 +421,11 @@ async function recordWavSnippet(durationMs: number): Promise<string> {
   return bytesToBase64(wavBytes);
 }
 
-async function classifyWithAi(apiKey: string, audioBase64: string): Promise<AttendanceListenResult> {
+async function classifyWithAi(
+  apiKey: string,
+  audioBase64: string,
+  expectedStudentName: string,
+): Promise<AttendanceListenResult> {
   if (!audioBase64) {
     return {
       status: 'silence',
@@ -391,18 +443,19 @@ async function classifyWithAi(apiKey: string, audioBase64: string): Promise<Atte
     body: JSON.stringify({
       model: OPENROUTER_AUDIO_MODEL,
       temperature: 0,
+      max_tokens: 32,
       messages: [
         {
           role: 'system',
           content:
-            'You are class attendance voice recognition. Determine whether the spoken reply means present, absent, unknown, or silence. Reply with a short line in the format "status: <present|absent|unknown|silence>; transcript: <what you heard>".',
+            `You are a class attendance assistant acting like a teacher. The expected student name is "${expectedStudentName}". Listen to the audio and decide whether the speaker identifies as that student. Return status "present" only when the spoken response confidently matches the expected student name or clearly confirms presence for that student. Return "absent" only for a clear absence response. Return "unknown" for noise, another name, weak match, or ambiguity. Return "silence" for no speech. Reply exactly in the format "status: <present|absent|unknown|silence>; transcript: <what you heard>".`,
         },
         {
           role: 'user',
           content: [
             {
               type: 'text',
-              text: 'Classify this attendance response.',
+              text: `Classify this attendance response for expected student ${expectedStudentName}.`,
             },
             {
               type: 'input_audio',
@@ -439,7 +492,7 @@ async function classifyWithAi(apiKey: string, audioBase64: string): Promise<Atte
   } else if (normalized.includes('status: unknown')) {
     status = 'unknown';
   } else {
-    status = interpretResponse(rawContent);
+    status = interpretResponse(rawContent, expectedStudentName);
   }
 
   return {
@@ -452,6 +505,7 @@ async function classifyWithAi(apiKey: string, audioBase64: string): Promise<Atte
 async function startAiListening(
   onResult: ResultHandler,
   silenceTimeout: number,
+  expectedStudentName: string,
   apiKeyOverride?: string,
 ): Promise<{ stop: () => void; mode: ListenMode }> {
   const apiKey = apiKeyOverride ?? await getOptionalApiKey();
@@ -474,7 +528,7 @@ async function startAiListening(
       const audioBase64 = await recordWavSnippet(silenceTimeout);
       if (cancelled) return;
 
-      const result = await classifyWithAi(apiKey, audioBase64);
+      const result = await classifyWithAi(apiKey, audioBase64, expectedStudentName);
       if (cancelled) return;
       onResult(result);
     } catch (error) {
@@ -499,11 +553,12 @@ async function startAiListening(
 
 export async function startListening(
   onResult: ResultHandler,
+  expectedStudentName: string,
   silenceTimeout = 4000,
 ): Promise<{ stop: () => void; mode: ListenMode }> {
   const apiKey = await getOptionalApiKey();
 
-  if (getSpeechRecognition()) {
+  if (!FORCE_AI_VOICE && getSpeechRecognition()) {
     let activeStop = () => {};
     let currentMode: ListenMode = 'browser';
     let stopped = false;
@@ -513,13 +568,13 @@ export async function startListening(
 
       if (result.error && apiKey) {
         currentMode = 'ai';
-        const aiListener = await startAiListening(onResult, silenceTimeout, apiKey);
+        const aiListener = await startAiListening(onResult, silenceTimeout, expectedStudentName, apiKey);
         activeStop = aiListener.stop;
         return;
       }
 
       onResult(result);
-    }, silenceTimeout);
+    }, silenceTimeout, expectedStudentName);
 
     activeStop = browserListener.stop;
 
@@ -534,7 +589,7 @@ export async function startListening(
     };
   }
 
-  return startAiListening(onResult, silenceTimeout, apiKey ?? undefined);
+  return startAiListening(onResult, silenceTimeout, expectedStudentName, apiKey ?? undefined);
 }
 
 export function stopListening(): void {
@@ -560,5 +615,5 @@ export async function callStudent(
     return { stop: () => {}, mode: 'manual' };
   }
 
-  return startListening(onResult, silenceTimeout);
+  return startListening(onResult, studentName, silenceTimeout);
 }
