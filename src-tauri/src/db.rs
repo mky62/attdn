@@ -2,11 +2,13 @@ use rusqlite::{params, Connection, Result as SqlResult};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::State;
-use uuid::Uuid;
 
+// Connection is Send but not Sync; Mutex<Connection> is Send+Sync
 pub struct DbState(pub Mutex<Connection>);
+unsafe impl Send for DbState {}
+unsafe impl Sync for DbState {}
 
-fn get_conn(state: &State<DbState>) -> std::sync::MutexGuard<Connection> {
+fn get_conn(state: &State<DbState>) -> std::sync::MutexGuard<'_, Connection> {
     state.0.lock().unwrap()
 }
 
