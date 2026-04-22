@@ -2,9 +2,8 @@ import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { save } from '@tauri-apps/plugin-dialog';
-import { writeTextFile, writeFile } from '@tauri-apps/plugin-fs';
 import type { ExportRow, ExportSummaryRow } from '../types';
+import { saveBinary, saveText } from './files';
 
 // ── CSV Export ──────────────────────────────────────────────────────────
 
@@ -90,50 +89,54 @@ function buildSummaryPdf(rows: ExportSummaryRow[], className: string): ArrayBuff
 
 // ── Save Helpers ────────────────────────────────────────────────────────
 
-async function saveFile(content: string | ArrayBuffer, defaultName: string, filters: { name: string; extensions: string[] }[]): Promise<boolean> {
-  const filePath = await save({
-    defaultPath: defaultName,
-    filters,
-  });
-  if (!filePath) return false;
-
+async function saveFile(
+  content: string | ArrayBuffer,
+  defaultName: string,
+  mimeType: string,
+): Promise<boolean> {
   if (typeof content === 'string') {
-    await writeTextFile(filePath, content);
-  } else {
-    const uint8 = new Uint8Array(content);
-    await writeFile(filePath, uint8);
+    return saveText(content, defaultName, mimeType);
   }
-  return true;
+
+  return saveBinary(content, defaultName, mimeType);
 }
 
 // ── Public API ──────────────────────────────────────────────────────────
 
 export async function exportAttendanceCsv(rows: ExportRow[], className: string): Promise<boolean> {
   const csv = buildAttendanceCsv(rows);
-  return saveFile(csv, `${className}_attendance.csv`, [{ name: 'CSV', extensions: ['csv'] }]);
+  return saveFile(csv, `${className}_attendance.csv`, 'text/csv;charset=utf-8');
 }
 
 export async function exportSummaryCsv(rows: ExportSummaryRow[], className: string): Promise<boolean> {
   const csv = buildSummaryCsv(rows);
-  return saveFile(csv, `${className}_summary.csv`, [{ name: 'CSV', extensions: ['csv'] }]);
+  return saveFile(csv, `${className}_summary.csv`, 'text/csv;charset=utf-8');
 }
 
 export async function exportAttendanceExcel(rows: ExportRow[], className: string): Promise<boolean> {
   const buffer = buildAttendanceExcel(rows);
-  return saveFile(buffer, `${className}_attendance.xlsx`, [{ name: 'Excel', extensions: ['xlsx'] }]);
+  return saveFile(
+    buffer,
+    `${className}_attendance.xlsx`,
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  );
 }
 
 export async function exportSummaryExcel(rows: ExportSummaryRow[], className: string): Promise<boolean> {
   const buffer = buildSummaryExcel(rows);
-  return saveFile(buffer, `${className}_summary.xlsx`, [{ name: 'Excel', extensions: ['xlsx'] }]);
+  return saveFile(
+    buffer,
+    `${className}_summary.xlsx`,
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  );
 }
 
 export async function exportAttendancePdf(rows: ExportRow[], className: string): Promise<boolean> {
   const buffer = buildAttendancePdf(rows, className);
-  return saveFile(buffer, `${className}_attendance.pdf`, [{ name: 'PDF', extensions: ['pdf'] }]);
+  return saveFile(buffer, `${className}_attendance.pdf`, 'application/pdf');
 }
 
 export async function exportSummaryPdf(rows: ExportSummaryRow[], className: string): Promise<boolean> {
   const buffer = buildSummaryPdf(rows, className);
-  return saveFile(buffer, `${className}_summary.pdf`, [{ name: 'PDF', extensions: ['pdf'] }]);
+  return saveFile(buffer, `${className}_summary.pdf`, 'application/pdf');
 }

@@ -11,9 +11,8 @@ import {
 } from 'lucide-react';
 import * as api from '../lib/api';
 import type { Class, Student } from '../types';
-import { open } from '@tauri-apps/plugin-dialog';
-import { readTextFile } from '@tauri-apps/plugin-fs';
 import Papa from 'papaparse';
+import { pickTextFile } from '../lib/files';
 
 export default function Students() {
   const [searchParams] = useSearchParams();
@@ -31,18 +30,18 @@ export default function Students() {
   useEffect(() => {
     api.getClasses().then((c) => {
       setClasses(c);
-      if (!selectedClassId && c.length > 0) {
-        setSelectedClassId(c[0].id);
+      if (c.length > 0) {
+        setSelectedClassId((current) => current || c[0].id);
       }
     });
   }, []);
 
   useEffect(() => {
-    if (selectedClassId) {
-      api.getStudents(selectedClassId).then(setStudents).catch(console.error);
-    } else {
-      setStudents([]);
-    }
+    const request = selectedClassId
+      ? api.getStudents(selectedClassId)
+      : Promise.resolve<Student[]>([]);
+
+    request.then(setStudents).catch(console.error);
   }, [selectedClassId]);
 
   const loadStudents = useCallback(() => {
@@ -94,13 +93,8 @@ export default function Students() {
   const handleImportCsv = async () => {
     if (!selectedClassId) return;
     try {
-      const filePath = await open({
-        multiple: false,
-        filters: [{ name: 'CSV', extensions: ['csv'] }],
-      });
-      if (!filePath) return;
-
-      const content = await readTextFile(filePath);
+      const content = await pickTextFile({ accept: '.csv,text/csv' });
+      if (!content) return;
       const result = Papa.parse<string[]>(content, {
         skipEmptyLines: true,
       });

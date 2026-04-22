@@ -1,31 +1,31 @@
 import { useState, useEffect } from 'react';
 import { Key, Globe, Shield, Info } from 'lucide-react';
-import { Store } from '@tauri-apps/plugin-store';
+import { deleteSetting, getSetting, setSetting } from '../lib/settings';
+import { isTauriApp } from '../lib/platform';
 
 export default function Settings() {
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [saved, setSaved] = useState(false);
+  const desktopMode = isTauriApp();
 
   useEffect(() => {
     (async () => {
       try {
-        const store = await Store.load('settings.json');
-        const key = await store.get<string>('openrouter_api_key');
+        const key = await getSetting('openrouter_api_key');
         if (key) setApiKey(key);
       } catch { /* first run */ }
     })();
   }, []);
 
-  const saveApiKey = async () => {
+  const saveApiKey = async (value = apiKey) => {
     try {
-      const store = await Store.load('settings.json');
-      if (apiKey.trim()) {
-        await store.set('openrouter_api_key', apiKey.trim());
+      const trimmedValue = value.trim();
+      if (trimmedValue) {
+        await setSetting('openrouter_api_key', trimmedValue);
       } else {
-        await store.delete('openrouter_api_key');
+        await deleteSetting('openrouter_api_key');
       }
-      await store.save();
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (e) {
@@ -45,8 +45,9 @@ export default function Settings() {
           <h3 className="font-semibold text-gray-900">AI Enhancement (Optional)</h3>
         </div>
         <p className="text-sm text-gray-500 mb-4">
-          Add your own OpenRouter API key to enable enhanced speech recognition and AI features.
-          This is completely optional — the app works fully without it.
+          Add your own OpenRouter API key to enable the optional AI listening fallback when the
+          browser microphone recognizer is unavailable or unreliable. This is completely optional
+          and the app still works without it.
         </p>
 
         <div className="flex gap-2 mb-2">
@@ -67,7 +68,7 @@ export default function Settings() {
 
         <div className="flex items-center justify-between">
           <button
-            onClick={saveApiKey}
+            onClick={() => void saveApiKey()}
             className="bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-primary-hover transition-colors"
           >
             {saved ? '✓ Saved' : 'Save Key'}
@@ -76,7 +77,7 @@ export default function Settings() {
             <button
               onClick={() => {
                 setApiKey('');
-                saveApiKey();
+                void saveApiKey('');
               }}
               className="text-sm text-danger hover:underline"
             >
@@ -94,7 +95,7 @@ export default function Settings() {
         </div>
         <ul className="text-sm text-blue-800 space-y-1">
           <li>• Your API key is stored locally on your device only</li>
-          <li>• AI calls go directly from your device to OpenRouter</li>
+          <li>• Optional AI calls go directly from your device to OpenRouter</li>
           <li>• No proxy server or backend is involved</li>
           <li>• The developer never sees or handles your key</li>
           <li>• The app works fully even without an API key</li>
@@ -108,10 +109,12 @@ export default function Settings() {
           <h3 className="font-semibold text-green-900">Offline First</h3>
         </div>
         <ul className="text-sm text-green-800 space-y-1">
-          <li>• All data stored locally in SQLite on your device</li>
+          <li>
+            • {desktopMode ? 'All data stored locally in SQLite on your device' : 'All data stored locally in your browser on this device'}
+          </li>
           <li>• Voice attendance works without internet (native TTS)</li>
           <li>• No cloud dependency for core features</li>
-          <li>• AI features require internet + API key (optional)</li>
+          <li>• AI voice fallback requires internet + API key (optional)</li>
         </ul>
       </div>
 

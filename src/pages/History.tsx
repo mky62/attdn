@@ -20,7 +20,6 @@ export default function History() {
   useEffect(() => {
     if (selectedClassId) {
       api.getAttendanceSessions(selectedClassId).then(setSessions).catch(console.error);
-      setExpandedSessionId(null);
     }
   }, [selectedClassId]);
 
@@ -53,7 +52,10 @@ export default function History() {
       <div className="mb-4">
         <select
           value={selectedClassId}
-          onChange={(e) => setSelectedClassId(e.target.value)}
+          onChange={(e) => {
+            setExpandedSessionId(null);
+            setSelectedClassId(e.target.value);
+          }}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary bg-white"
         >
           <option value="">Select a class</option>

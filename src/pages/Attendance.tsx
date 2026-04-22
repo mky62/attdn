@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Mic,
@@ -11,12 +11,20 @@ import {
   XCircle,
   Pause,
   Play,
+  Sparkles,
 } from 'lucide-react';
-import * as api from '../lib/api';
-import { speakStudentName, repeatStudentName, stopSpeaking, callStudent } from '../lib/voice';
-// Note: speakStudentName and repeatStudentName are used directly in the component for non-voice-input mode and repeat
-import type { Class, Student } from '../types';
 import { format } from 'date-fns';
+import * as api from '../lib/api';
+import {
+  callStudent,
+  ensureMicrophoneAccess,
+  getVoiceCapabilities,
+  repeatStudentName,
+  stopListening,
+  stopSpeaking,
+  type AttendanceListenResult,
+} from '../lib/voice';
+import type { Class, Student } from '../types';
 
 type SessionState = 'setup' | 'active' | 'paused' | 'complete';
 
@@ -34,155 +42,310 @@ export default function Attendance() {
   const [useVoiceInput, setUseVoiceInput] = useState(true);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [isListening, setIsListening] = useState(false);
-  const [silenceTimeout, setSilenceTimeout] = useState(4000);
+  const [silenceTimeout, setSilenceTimeout] = useState(6000);
+  const [statusMessage, setStatusMessage] = useState('Ready to start attendance.');
+  const [browserVoiceReady, setBrowserVoiceReady] = useState(false);
+  const [aiFallbackReady, setAiFallbackReady] = useState(false);
+
   const listenerRef = useRef<{ stop: () => void } | null>(null);
-
-  useEffect(() => {
-    api.getClasses().then((c) => {
-      setClasses(c);
-      if (!selectedClassId && c.length > 0) {
-        setSelectedClassId(c[0].id);
-      }
-    });
-  }, []);
-
-  useEffect(() => {
-    if (selectedClassId) {
-      api.getStudents(selectedClassId).then(setStudents).catch(console.error);
-    }
-  }, [selectedClassId]);
+  const advanceTimerRef = useRef<number | null>(null);
+  const stepTokenRef = useRef(0);
+  const sessionIdRef = useRef('');
+  const runStudentStepRef = useRef<(index: number) => void | Promise<void>>(() => {});
 
   const today = format(new Date(), 'yyyy-MM-dd');
 
-  const startSession = async () => {
-    if (!selectedClassId) return;
-    const session = await api.getOrCreateSession(selectedClassId, today);
-    setSessionId(session.id);
-    // Mark all absent first
-    await api.markAllAbsent(session.id, selectedClassId);
-    const initialRecords = new Map<string, string>();
-    students.forEach((s) => initialRecords.set(s.id, 'absent'));
-    setRecords(initialRecords);
-    setCurrentIndex(0);
-    setSessionState('active');
-  };
+  const clearAdvanceTimer = useCallback(() => {
+    if (advanceTimerRef.current !== null) {
+      window.clearTimeout(advanceTimerRef.current);
+      advanceTimerRef.current = null;
+    }
+  }, []);
 
-  const markStudent = useCallback(
-    async (studentId: string, status: 'present' | 'absent') => {
-      if (!sessionId) return;
-      await api.markAttendance(sessionId, studentId, status);
-      setRecords((prev) => {
-        const next = new Map(prev);
-        next.set(studentId, status);
-        return next;
-      });
-    },
-    [sessionId],
-  );
-
-  const callNextStudent = useCallback(
-    async (index: number) => {
-      if (index >= students.length) {
-        setSessionState('complete');
-        return;
-      }
-      const student = students[index];
-      if (!student) return;
-
-      if (voiceEnabled) {
-        if (useVoiceInput) {
-          setIsListening(true);
-          const listener = await callStudent(
-            student.name,
-            (result) => {
-              setIsListening(false);
-              if (result === 'present') {
-                markStudent(student.id, 'present');
-              } else if (result === 'absent') {
-                markStudent(student.id, 'absent');
-              }
-              // 'unknown' or 'silence' - leave as absent (default)
-            },
-            silenceTimeout,
-            useVoiceInput,
-          );
-          listenerRef.current = listener;
-        } else {
-          await speakStudentName(student.name);
-        }
-      }
-    },
-    [students, voiceEnabled, useVoiceInput, silenceTimeout, markStudent],
-  );
+  const stopCurrentInteraction = useCallback(() => {
+    listenerRef.current?.stop();
+    listenerRef.current = null;
+    clearAdvanceTimer();
+    stopListening();
+    stopSpeaking();
+    setIsListening(false);
+  }, [clearAdvanceTimer]);
 
   useEffect(() => {
-    if (sessionState === 'active' && currentIndex < students.length) {
-      callNextStudent(currentIndex);
+    api.getClasses()
+      .then((loadedClasses) => {
+        setClasses(loadedClasses);
+        if (loadedClasses.length > 0) {
+          setSelectedClassId((current) => current || loadedClasses[0].id);
+        }
+      })
+      .catch(console.error);
+
+    getVoiceCapabilities()
+      .then((capabilities) => {
+        setBrowserVoiceReady(capabilities.browserRecognitionAvailable);
+        setAiFallbackReady(capabilities.aiFallbackAvailable);
+      })
+      .catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    const request = selectedClassId
+      ? api.getStudents(selectedClassId)
+      : Promise.resolve<Student[]>([]);
+
+    request.then(setStudents).catch(console.error);
+  }, [selectedClassId]);
+
+  useEffect(() => {
+    return () => {
+      stopCurrentInteraction();
+    };
+  }, [stopCurrentInteraction]);
+
+  const markStudent = useCallback(async (studentId: string, status: 'present' | 'absent') => {
+    if (!sessionIdRef.current) return;
+
+    await api.markAttendance(sessionIdRef.current, studentId, status);
+    setRecords((previous) => {
+      const next = new Map(previous);
+      next.set(studentId, status);
+      return next;
+    });
+  }, []);
+
+  const completeSession = useCallback(() => {
+    stopCurrentInteraction();
+    setSessionState('complete');
+    setStatusMessage('Attendance session completed.');
+  }, [stopCurrentInteraction]);
+
+  const handleListenResult = useCallback(async (
+    student: Student,
+    result: AttendanceListenResult,
+    nextIndex: number,
+  ) => {
+    setIsListening(false);
+
+    if (result.status === 'present' || result.status === 'absent') {
+      await markStudent(student.id, result.status);
     }
-  }, [sessionState, currentIndex, students.length, callNextStudent]);
+
+    const transcriptDetail = result.transcript ? ` Heard: "${result.transcript}".` : '';
+    const sourceLabel = result.mode === 'ai' ? 'AI fallback' : result.mode === 'browser' ? 'browser mic' : 'manual mode';
+
+    if (result.status === 'present') {
+      setStatusMessage(`${student.name} marked present via ${sourceLabel}.${transcriptDetail}`);
+    } else if (result.status === 'absent') {
+      setStatusMessage(`${student.name} marked absent via ${sourceLabel}.${transcriptDetail}`);
+    } else if (result.error) {
+      setStatusMessage(`${result.error} ${student.name} was not advanced. Use Repeat or mark manually.`);
+    } else {
+      setStatusMessage(`No clear response for ${student.name}.${transcriptDetail} Use Repeat or mark manually.`);
+    }
+
+    if (result.status !== 'present' && result.status !== 'absent') {
+      listenerRef.current = null;
+      return;
+    }
+
+    if (nextIndex >= students.length) {
+      completeSession();
+      return;
+    }
+
+    clearAdvanceTimer();
+    advanceTimerRef.current = window.setTimeout(() => {
+      setCurrentIndex(nextIndex);
+      if (sessionState === 'active') {
+        void runStudentStepRef.current(nextIndex);
+      }
+    }, 700);
+  }, [clearAdvanceTimer, completeSession, markStudent, sessionState, students.length]);
+
+  const runStudentStep = useCallback(async (index: number) => {
+    stopCurrentInteraction();
+
+    if (index >= students.length) {
+      completeSession();
+      return;
+    }
+
+    const student = students[index];
+    if (!student) {
+      completeSession();
+      return;
+    }
+
+    const stepToken = stepTokenRef.current + 1;
+    stepTokenRef.current = stepToken;
+
+    setCurrentIndex(index);
+
+    if (!voiceEnabled) {
+      setStatusMessage('Voice output is off. Mark attendance manually for the selected student.');
+      return;
+    }
+
+    setStatusMessage(`Calling ${student.name}...`);
+
+    const listener = await callStudent(
+      student.name,
+      (result) => {
+        if (stepToken !== stepTokenRef.current) {
+          return;
+        }
+        void handleListenResult(student, result, index + 1);
+      },
+      silenceTimeout,
+      useVoiceInput,
+    );
+
+    if (stepToken !== stepTokenRef.current) {
+      listener.stop();
+      return;
+    }
+
+    listenerRef.current = listener;
+
+    if (!useVoiceInput) {
+      setStatusMessage(`${student.name} announced. Use the Present or Absent buttons.`);
+      return;
+    }
+
+    setIsListening(true);
+    setStatusMessage(
+      listener.mode === 'ai'
+        ? `Listening for ${student.name} with AI fallback...`
+        : `Listening for ${student.name}...`,
+    );
+  }, [completeSession, handleListenResult, silenceTimeout, stopCurrentInteraction, students, useVoiceInput, voiceEnabled]);
+
+  useEffect(() => {
+    runStudentStepRef.current = runStudentStep;
+  }, [runStudentStep]);
+
+  const startSession = async () => {
+    if (!selectedClassId || students.length === 0) return;
+
+    if (useVoiceInput) {
+      const microphoneAvailable = await ensureMicrophoneAccess();
+      if (!microphoneAvailable) {
+        setStatusMessage('Microphone access is blocked. Allow microphone access and try again.');
+        return;
+      }
+    }
+
+    try {
+      const nextSession = await api.getOrCreateSession(selectedClassId, today);
+      sessionIdRef.current = nextSession.id;
+      setSessionId(nextSession.id);
+
+      await api.markAllAbsent(nextSession.id, selectedClassId);
+
+      const initialRecords = new Map<string, string>();
+      students.forEach((student) => initialRecords.set(student.id, 'absent'));
+      setRecords(initialRecords);
+      setCurrentIndex(0);
+      setSessionState('active');
+      setStatusMessage('Attendance session started.');
+      void runStudentStep(0);
+    } catch (error) {
+      console.error(error);
+      setStatusMessage('Unable to start attendance right now.');
+    }
+  };
+
+  const moveToStudent = (index: number) => {
+    if (index < 0 || index >= students.length) return;
+    setCurrentIndex(index);
+    if (sessionState === 'active') {
+      void runStudentStep(index);
+    }
+  };
 
   const nextStudent = () => {
-    listenerRef.current?.stop();
-    setIsListening(false);
-    stopSpeaking();
+    stopCurrentInteraction();
     if (currentIndex + 1 < students.length) {
-      setCurrentIndex(currentIndex + 1);
-    } else {
-      setSessionState('complete');
+      moveToStudent(currentIndex + 1);
+      return;
     }
+    completeSession();
   };
 
   const prevStudent = () => {
-    listenerRef.current?.stop();
-    setIsListening(false);
-    stopSpeaking();
+    stopCurrentInteraction();
     if (currentIndex > 0) {
-      setCurrentIndex(currentIndex - 1);
+      moveToStudent(currentIndex - 1);
     }
   };
 
+  const handleManualMark = async (status: 'present' | 'absent') => {
+    const student = students[currentIndex];
+    if (!student) return;
+
+    stopCurrentInteraction();
+    await markStudent(student.id, status);
+    setStatusMessage(`${student.name} marked ${status}.`);
+
+    if (currentIndex + 1 >= students.length) {
+      completeSession();
+      return;
+    }
+
+    clearAdvanceTimer();
+    advanceTimerRef.current = window.setTimeout(() => {
+      moveToStudent(currentIndex + 1);
+    }, 700);
+  };
+
   const handleRepeat = async () => {
-    if (currentIndex < students.length) {
-      listenerRef.current?.stop();
-      setIsListening(false);
-      stopSpeaking();
-      await repeatStudentName(students[currentIndex].name);
+    const student = students[currentIndex];
+    if (!student || !voiceEnabled) return;
+
+    stopCurrentInteraction();
+    setStatusMessage(`Repeating ${student.name}...`);
+    await repeatStudentName(student.name);
+
+    if (sessionState === 'active') {
+      setStatusMessage(`Listening for ${student.name} again...`);
+      void runStudentStep(currentIndex);
     }
   };
 
   const togglePause = () => {
     if (sessionState === 'active') {
-      listenerRef.current?.stop();
-      setIsListening(false);
-      stopSpeaking();
+      stopCurrentInteraction();
       setSessionState('paused');
-    } else if (sessionState === 'paused') {
+      setStatusMessage('Attendance paused.');
+      return;
+    }
+
+    if (sessionState === 'paused') {
       setSessionState('active');
+      setStatusMessage('Attendance resumed.');
+      void runStudentStep(currentIndex);
     }
   };
 
   const endSession = () => {
-    listenerRef.current?.stop();
-    setIsListening(false);
-    stopSpeaking();
-    setSessionState('complete');
+    completeSession();
   };
 
   const resetSession = () => {
-    listenerRef.current?.stop();
-    setIsListening(false);
-    stopSpeaking();
+    stopCurrentInteraction();
     setSessionState('setup');
     setCurrentIndex(0);
     setRecords(new Map());
     setSessionId('');
+    sessionIdRef.current = '';
+    setStatusMessage('Ready to start attendance.');
   };
 
-  const presentCount = Array.from(records.values()).filter((s) => s === 'present').length;
-  const absentCount = Array.from(records.values()).filter((s) => s === 'absent').length;
+  const selectedClass = classes.find((item) => item.id === selectedClassId);
   const currentStudent = students[currentIndex];
-
-  // ── Setup Screen ──────────────────────────────────────────────────────
+  const presentCount = Array.from(records.values()).filter((status) => status === 'present').length;
+  const absentCount = Array.from(records.values()).filter((status) => status === 'absent').length;
 
   if (sessionState === 'setup') {
     return (
@@ -195,13 +358,13 @@ export default function Attendance() {
             <label className="block text-sm font-medium text-gray-700 mb-1">Class</label>
             <select
               value={selectedClassId}
-              onChange={(e) => setSelectedClassId(e.target.value)}
+              onChange={(event) => setSelectedClassId(event.target.value)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary bg-white"
             >
               <option value="">Select a class</option>
-              {classes.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} {c.section ? `— ${c.section}` : ''}
+              {classes.map((course) => (
+                <option key={course.id} value={course.id}>
+                  {course.name} {course.section ? `— ${course.section}` : ''}
                 </option>
               ))}
             </select>
@@ -217,13 +380,19 @@ export default function Attendance() {
             />
           </div>
 
+          <div className="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-700">
+            <p className="font-medium text-slate-900 mb-1">Listening engines</p>
+            <p>Browser speech recognition: {browserVoiceReady ? 'available' : 'not available'}</p>
+            <p>AI fallback via OpenRouter key: {aiFallbackReady ? 'ready' : 'not configured'}</p>
+          </div>
+
           <div className="flex items-center justify-between py-2">
             <div>
               <p className="text-sm font-medium text-gray-700">Voice Output (TTS)</p>
               <p className="text-xs text-gray-500">Read student names aloud</p>
             </div>
             <button
-              onClick={() => setVoiceEnabled(!voiceEnabled)}
+              onClick={() => setVoiceEnabled((current) => !current)}
               className={`p-2 rounded-lg transition-colors ${
                 voiceEnabled ? 'bg-primary text-white' : 'bg-gray-100 text-gray-400'
               }`}
@@ -238,7 +407,7 @@ export default function Attendance() {
               <p className="text-xs text-gray-500">Listen for "present" / "absent"</p>
             </div>
             <button
-              onClick={() => setUseVoiceInput(!useVoiceInput)}
+              onClick={() => setUseVoiceInput((current) => !current)}
               className={`p-2 rounded-lg transition-colors ${
                 useVoiceInput ? 'bg-primary text-white' : 'bg-gray-100 text-gray-400'
               }`}
@@ -258,7 +427,7 @@ export default function Attendance() {
                 max={8000}
                 step={500}
                 value={silenceTimeout}
-                onChange={(e) => setSilenceTimeout(Number(e.target.value))}
+                onChange={(event) => setSilenceTimeout(Number(event.target.value))}
                 className="w-full"
               />
             </div>
@@ -273,6 +442,13 @@ export default function Attendance() {
             Start Attendance
           </button>
 
+          <div className="rounded-xl bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-900">
+            <div className="flex items-start gap-2">
+              <Sparkles size={16} className="mt-0.5 flex-shrink-0" />
+              <p>{statusMessage}</p>
+            </div>
+          </div>
+
           {students.length === 0 && selectedClassId && (
             <p className="text-xs text-warning text-center">
               No students in this class. Add students first.
@@ -283,8 +459,6 @@ export default function Attendance() {
     );
   }
 
-  // ── Complete Screen ────────────────────────────────────────────────────
-
   if (sessionState === 'complete') {
     return (
       <div className="p-6 max-w-2xl">
@@ -292,6 +466,7 @@ export default function Attendance() {
           <CheckCircle2 size={48} className="mx-auto text-success mb-3" />
           <h2 className="text-xl font-bold text-gray-900 mb-1">Attendance Complete</h2>
           <p className="text-sm text-gray-500 mb-4">{today}</p>
+          {sessionId && <p className="text-xs text-gray-400 mb-4">Session ID: {sessionId}</p>}
 
           <div className="flex justify-center gap-6 mb-6">
             <div className="text-center">
@@ -308,22 +483,26 @@ export default function Attendance() {
             </div>
           </div>
 
+          <div className="rounded-xl bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-900 mb-4">
+            {statusMessage}
+          </div>
+
           <div className="max-h-60 overflow-auto text-left mb-4">
-            {students.map((s) => (
+            {students.map((student) => (
               <div
-                key={s.id}
+                key={student.id}
                 className="flex items-center justify-between py-1.5 px-3 text-sm border-b border-gray-100 last:border-0"
               >
                 <span className="text-gray-700">
-                  {s.roll_number && <span className="text-gray-400 mr-2">{s.roll_number}</span>}
-                  {s.name}
+                  {student.roll_number && <span className="text-gray-400 mr-2">{student.roll_number}</span>}
+                  {student.name}
                 </span>
                 <span
                   className={`font-medium ${
-                    records.get(s.id) === 'present' ? 'text-success' : 'text-danger'
+                    records.get(student.id) === 'present' ? 'text-success' : 'text-danger'
                   }`}
                 >
-                  {records.get(s.id) === 'present' ? 'Present' : 'Absent'}
+                  {records.get(student.id) === 'present' ? 'Present' : 'Absent'}
                 </span>
               </div>
             ))}
@@ -340,16 +519,11 @@ export default function Attendance() {
     );
   }
 
-  // ── Active / Paused Session ────────────────────────────────────────────
-
   return (
     <div className="p-6 max-w-3xl h-full flex flex-col">
-      {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-lg font-bold text-gray-900">
-            {classes.find((c) => c.id === selectedClassId)?.name}
-          </h2>
+          <h2 className="text-lg font-bold text-gray-900">{selectedClass?.name}</h2>
           <p className="text-xs text-gray-500">
             {today} · {currentIndex + 1} / {students.length}
           </p>
@@ -361,15 +535,17 @@ export default function Attendance() {
         </div>
       </div>
 
-      {/* Progress bar */}
       <div className="w-full bg-gray-200 rounded-full h-1.5 mb-4">
         <div
           className="bg-primary h-1.5 rounded-full transition-all"
-          style={{ width: `${((currentIndex + 1) / students.length) * 100}%` }}
+          style={{ width: `${students.length > 0 ? ((currentIndex + 1) / students.length) * 100 : 0}%` }}
         />
       </div>
 
-      {/* Current Student Card */}
+      <div className="rounded-xl bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-900 mb-4">
+        {statusMessage}
+      </div>
+
       {currentStudent && (
         <div className="bg-white rounded-xl border-2 border-primary/20 p-6 mb-4 flex-shrink-0">
           <div className="text-center mb-4">
@@ -388,10 +564,9 @@ export default function Attendance() {
             )}
           </div>
 
-          {/* Manual Controls */}
           <div className="flex justify-center gap-3">
             <button
-              onClick={() => markStudent(currentStudent.id, 'present')}
+              onClick={() => void handleManualMark('present')}
               className={`flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold transition-all ${
                 records.get(currentStudent.id) === 'present'
                   ? 'bg-success text-white shadow-md'
@@ -402,7 +577,7 @@ export default function Attendance() {
               Present
             </button>
             <button
-              onClick={() => markStudent(currentStudent.id, 'absent')}
+              onClick={() => void handleManualMark('absent')}
               className={`flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold transition-all ${
                 records.get(currentStudent.id) === 'absent'
                   ? 'bg-danger text-white shadow-md'
@@ -416,7 +591,6 @@ export default function Attendance() {
         </div>
       )}
 
-      {/* Navigation Controls */}
       <div className="flex items-center justify-center gap-2 mb-4 flex-shrink-0">
         <button
           onClick={prevStudent}
@@ -426,7 +600,7 @@ export default function Attendance() {
           <SkipForward size={18} className="rotate-180" />
         </button>
         <button
-          onClick={handleRepeat}
+          onClick={() => void handleRepeat()}
           disabled={!voiceEnabled}
           className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-30 transition-colors"
           title="Repeat name"
@@ -454,35 +628,34 @@ export default function Attendance() {
         </button>
       </div>
 
-      {/* Student List */}
       <div className="flex-1 overflow-auto bg-white rounded-xl border border-gray-200">
         <div className="divide-y divide-gray-100">
-          {students.map((s, i) => (
+          {students.map((student, index) => (
             <div
-              key={s.id}
+              key={student.id}
               className={`flex items-center justify-between px-4 py-2 text-sm ${
-                i === currentIndex ? 'bg-primary-light' : ''
+                index === currentIndex ? 'bg-primary-light' : ''
               }`}
             >
               <div className="flex items-center gap-2">
-                <span className="text-gray-400 text-xs w-6">{i + 1}</span>
-                <span className="text-gray-400 text-xs w-12">{s.roll_number}</span>
-                <span className={`font-medium ${i === currentIndex ? 'text-primary' : 'text-gray-800'}`}>
-                  {s.name}
+                <span className="text-gray-400 text-xs w-6">{index + 1}</span>
+                <span className="text-gray-400 text-xs w-12">{student.roll_number}</span>
+                <span className={`font-medium ${index === currentIndex ? 'text-primary' : 'text-gray-800'}`}>
+                  {student.name}
                 </span>
               </div>
               <span
                 className={`text-xs font-medium ${
-                  records.get(s.id) === 'present'
+                  records.get(student.id) === 'present'
                     ? 'text-success'
-                    : records.get(s.id) === 'absent'
+                    : records.get(student.id) === 'absent'
                       ? 'text-danger'
                       : 'text-gray-300'
                 }`}
               >
-                {records.get(s.id) === 'present'
+                {records.get(student.id) === 'present'
                   ? '✓ Present'
-                  : records.get(s.id) === 'absent'
+                  : records.get(student.id) === 'absent'
                     ? '✗ Absent'
                     : '—'}
               </span>
