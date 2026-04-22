@@ -1,15 +1,19 @@
-use rusqlite::{params, Connection, Result as SqlResult};
+use rusqlite::{params, Connection, Row};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::State;
+use uuid::Uuid;
 
-// Connection is Send but not Sync; Mutex<Connection> is Send+Sync
 pub struct DbState(pub Mutex<Connection>);
 unsafe impl Send for DbState {}
 unsafe impl Sync for DbState {}
 
-fn get_conn(state: &State<DbState>) -> std::sync::MutexGuard<'_, Connection> {
+fn get_conn<'a>(state: &'a State<'a, DbState>) -> std::sync::MutexGuard<'a, Connection> {
     state.0.lock().unwrap()
+}
+
+fn e2s(e: rusqlite::Error) -> String {
+    e.to_string()
 }
 
 // ── Models ──────────────────────────────────────────────────────────────
@@ -22,6 +26,15 @@ pub struct Class {
     pub created_at: String,
 }
 
+fn row_to_class(row: &Row) -> rusqlite::Result<Class> {
+    Ok(Class {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        section: row.get(2)?,
+        created_at: row.get(3)?,
+    })
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Student {
     pub id: String,
@@ -31,12 +44,31 @@ pub struct Student {
     pub created_at: String,
 }
 
+fn row_to_student(row: &Row) -> rusqlite::Result<Student> {
+    Ok(Student {
+        id: row.get(0)?,
+        class_id: row.get(1)?,
+        name: row.get(2)?,
+        roll_number: row.get(3)?,
+        created_at: row.get(4)?,
+    })
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AttendanceSession {
     pub id: String,
     pub class_id: String,
     pub date: String,
     pub created_at: String,
+}
+
+fn row_to_session(row: &Row) -> rusqlite::Result<AttendanceSession> {
+    Ok(AttendanceSession {
+        id: row.get(0)?,
+        class_id: row.get(1)?,
+        date: row.get(2)?,
+        created_at: row.get(3)?,
+    })
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -49,6 +81,17 @@ pub struct AttendanceRecord {
     pub status: String,
 }
 
+fn row_to_record(row: &Row) -> rusqlite::Result<AttendanceRecord> {
+    Ok(AttendanceRecord {
+        id: row.get(0)?,
+        session_id: row.get(1)?,
+        student_id: row.get(2)?,
+        student_name: row.get(3)?,
+        roll_number: row.get(4)?,
+        status: row.get(5)?,
+    })
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StudentSummary {
     pub student_id: String,
@@ -58,9 +101,55 @@ pub struct StudentSummary {
     pub present_count: i64,
 }
 
+fn row_to_summary(row: &Row) -> rusqlite::Result<StudentSummary> {
+    Ok(StudentSummary {
+        student_id: row.get(0)?,
+        student_name: row.get(1)?,
+        roll_number: row.get(2)?,
+        total_sessions: row.get(3)?,
+        present_count: row.get(4)?,
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExportRow {
+    pub roll_number: String,
+    pub student_name: String,
+    pub date: String,
+    pub status: String,
+}
+
+fn row_to_export(row: &Row) -> rusqlite::Result<ExportRow> {
+    Ok(ExportRow {
+        roll_number: row.get(0)?,
+        student_name: row.get(1)?,
+        date: row.get(2)?,
+        status: row.get::<_, Option<String>>(3)?.unwrap_or_else(|| "not_marked".to_string()),
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExportSummaryRow {
+    pub roll_number: String,
+    pub student_name: String,
+    pub total_sessions: i64,
+    pub present_count: i64,
+    pub percentage: f64,
+}
+
+fn row_to_export_summary(row: &Row) -> rusqlite::Result<ExportSummaryRow> {
+    Ok(ExportSummaryRow {
+        roll_number: row.get(0)?,
+        student_name: row.get(1)?,
+        total_sessions: row.get(2)?,
+        present_count: row.get(3)?,
+        percentage: row.get(4)?,
+    })
+}
+
 // ── Init ────────────────────────────────────────────────────────────────
 
-pub fn init_db(conn: &Connection) -> SqlResult<()> {
+pub fn init_db(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "
         PRAGMA journal_mode = WAL;
@@ -106,7 +195,7 @@ pub fn init_db(conn: &Connection) -> SqlResult<()> {
         CREATE INDEX IF NOT EXISTS idx_records_session ON attendance_records(session_id);
         CREATE INDEX IF NOT EXISTS idx_records_student ON attendance_records(student_id);
         "
-    )
+    ).map_err(e2s)
 }
 
 // ── Class Commands ──────────────────────────────────────────────────────
@@ -116,18 +205,9 @@ pub fn get_classes(state: State<DbState>) -> Result<Vec<Class>, String> {
     let conn = get_conn(&state);
     let mut stmt = conn
         .prepare("SELECT id, name, section, created_at FROM classes ORDER BY name")
-        .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok(Class {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                section: row.get(2)?,
-                created_at: row.get(3)?,
-            })
-        })
-        .map_err(|e| e.to_string())?;
-    rows.collect::<SqlResult<Vec<Class>>>().map_err(|e| e.to_string())
+        .map_err(e2s)?;
+    let rows = stmt.query_map([], row_to_class).map_err(e2s)?;
+    rows.collect::<Result<Vec<Class>, _>>().map_err(e2s)
 }
 
 #[tauri::command]
@@ -139,36 +219,22 @@ pub fn create_class(state: State<DbState>, name: String, section: String) -> Res
         "INSERT INTO classes (id, name, section, created_at) VALUES (?1, ?2, ?3, ?4)",
         params![id, name, section, created_at],
     )
-    .map_err(|e| e.to_string())?;
-    Ok(Class {
-        id,
-        name,
-        section,
-        created_at,
-    })
+    .map_err(e2s)?;
+    Ok(Class { id, name, section, created_at })
 }
 
 #[tauri::command]
-pub fn update_class(
-    state: State<DbState>,
-    id: String,
-    name: String,
-    section: String,
-) -> Result<(), String> {
+pub fn update_class(state: State<DbState>, id: String, name: String, section: String) -> Result<(), String> {
     let conn = get_conn(&state);
-    conn.execute(
-        "UPDATE classes SET name = ?1, section = ?2 WHERE id = ?3",
-        params![name, section, id],
-    )
-    .map_err(|e| e.to_string())?;
+    conn.execute("UPDATE classes SET name = ?1, section = ?2 WHERE id = ?3", params![name, section, id])
+        .map_err(e2s)?;
     Ok(())
 }
 
 #[tauri::command]
 pub fn delete_class(state: State<DbState>, id: String) -> Result<(), String> {
     let conn = get_conn(&state);
-    conn.execute("DELETE FROM classes WHERE id = ?1", params![id])
-        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM classes WHERE id = ?1", params![id]).map_err(e2s)?;
     Ok(())
 }
 
@@ -178,54 +244,26 @@ pub fn delete_class(state: State<DbState>, id: String) -> Result<(), String> {
 pub fn get_students(state: State<DbState>, class_id: String) -> Result<Vec<Student>, String> {
     let conn = get_conn(&state);
     let mut stmt = conn
-        .prepare(
-            "SELECT id, class_id, name, roll_number, created_at FROM students WHERE class_id = ?1 ORDER BY roll_number, name",
-        )
-        .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map(params![class_id], |row| {
-            Ok(Student {
-                id: row.get(0)?,
-                class_id: row.get(1)?,
-                name: row.get(2)?,
-                roll_number: row.get(3)?,
-                created_at: row.get(4)?,
-            })
-        })
-        .map_err(|e| e.to_string())?;
-    rows.collect::<SqlResult<Vec<Student>>>().map_err(|e| e.to_string())
+        .prepare("SELECT id, class_id, name, roll_number, created_at FROM students WHERE class_id = ?1 ORDER BY roll_number, name")
+        .map_err(e2s)?;
+    let rows = stmt.query_map(params![class_id], row_to_student).map_err(e2s)?;
+    rows.collect::<Result<Vec<Student>, _>>().map_err(e2s)
 }
 
 #[tauri::command]
-pub fn create_student(
-    state: State<DbState>,
-    class_id: String,
-    name: String,
-    roll_number: String,
-) -> Result<Student, String> {
+pub fn create_student(state: State<DbState>, class_id: String, name: String, roll_number: String) -> Result<Student, String> {
     let conn = get_conn(&state);
     let id = Uuid::new_v4().to_string();
     let created_at = chrono::Utc::now().to_rfc3339();
     conn.execute(
         "INSERT INTO students (id, class_id, name, roll_number, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
         params![id, class_id, name, roll_number, created_at],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(Student {
-        id,
-        class_id,
-        name,
-        roll_number,
-        created_at,
-    })
+    ).map_err(e2s)?;
+    Ok(Student { id, class_id, name, roll_number, created_at })
 }
 
 #[tauri::command]
-pub fn import_students(
-    state: State<DbState>,
-    class_id: String,
-    students: Vec<(String, String)>,
-) -> Result<usize, String> {
+pub fn import_students(state: State<DbState>, class_id: String, students: Vec<(String, String)>) -> Result<usize, String> {
     let conn = get_conn(&state);
     let mut count = 0;
     for (name, roll_number) in students {
@@ -234,133 +272,84 @@ pub fn import_students(
         conn.execute(
             "INSERT INTO students (id, class_id, name, roll_number, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![id, class_id, name, roll_number, created_at],
-        )
-        .map_err(|e| e.to_string())?;
+        ).map_err(e2s)?;
         count += 1;
     }
     Ok(count)
 }
 
 #[tauri::command]
-pub fn update_student(
-    state: State<DbState>,
-    id: String,
-    name: String,
-    roll_number: String,
-) -> Result<(), String> {
+pub fn update_student(state: State<DbState>, id: String, name: String, roll_number: String) -> Result<(), String> {
     let conn = get_conn(&state);
-    conn.execute(
-        "UPDATE students SET name = ?1, roll_number = ?2 WHERE id = ?3",
-        params![name, roll_number, id],
-    )
-    .map_err(|e| e.to_string())?;
+    conn.execute("UPDATE students SET name = ?1, roll_number = ?2 WHERE id = ?3", params![name, roll_number, id])
+        .map_err(e2s)?;
     Ok(())
 }
 
 #[tauri::command]
 pub fn delete_student(state: State<DbState>, id: String) -> Result<(), String> {
     let conn = get_conn(&state);
-    conn.execute("DELETE FROM students WHERE id = ?1", params![id])
-        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM students WHERE id = ?1", params![id]).map_err(e2s)?;
     Ok(())
 }
 
 // ── Attendance Session Commands ─────────────────────────────────────────
 
 #[tauri::command]
-pub fn create_attendance_session(
-    state: State<DbState>,
-    class_id: String,
-    date: String,
-) -> Result<AttendanceSession, String> {
+pub fn create_attendance_session(state: State<DbState>, class_id: String, date: String) -> Result<AttendanceSession, String> {
     let conn = get_conn(&state);
     let id = Uuid::new_v4().to_string();
     let created_at = chrono::Utc::now().to_rfc3339();
     conn.execute(
         "INSERT INTO attendance_sessions (id, class_id, date, created_at) VALUES (?1, ?2, ?3, ?4)",
         params![id, class_id, date, created_at],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(AttendanceSession {
-        id,
-        class_id,
-        date,
-        created_at,
-    })
+    ).map_err(e2s)?;
+    Ok(AttendanceSession { id, class_id, date, created_at })
 }
 
 #[tauri::command]
-pub fn get_or_create_session(
-    state: State<DbState>,
-    class_id: String,
-    date: String,
-) -> Result<AttendanceSession, String> {
+pub fn get_or_create_session(state: State<DbState>, class_id: String, date: String) -> Result<AttendanceSession, String> {
     let conn = get_conn(&state);
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, class_id, date, created_at FROM attendance_sessions WHERE class_id = ?1 AND date = ?2",
-        )
-        .map_err(|e| e.to_string())?;
-    let existing: Option<AttendanceSession> = stmt
-        .query_row(params![class_id, date], |row| {
-            Ok(AttendanceSession {
-                id: row.get(0)?,
-                class_id: row.get(1)?,
-                date: row.get(2)?,
-                created_at: row.get(3)?,
-            })
-        })
-        .ok();
+    let existing = conn.query_row(
+        "SELECT id, class_id, date, created_at FROM attendance_sessions WHERE class_id = ?1 AND date = ?2",
+        params![class_id, date],
+        row_to_session,
+    ).ok();
 
     if let Some(session) = existing {
         return Ok(session);
     }
 
-    drop(stmt);
-    create_attendance_session(state, class_id, date)
+    let id = Uuid::new_v4().to_string();
+    let created_at = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO attendance_sessions (id, class_id, date, created_at) VALUES (?1, ?2, ?3, ?4)",
+        params![id, class_id, date, created_at],
+    ).map_err(e2s)?;
+    Ok(AttendanceSession { id, class_id, date, created_at })
 }
 
 #[tauri::command]
-pub fn get_attendance_sessions(
-    state: State<DbState>,
-    class_id: String,
-) -> Result<Vec<AttendanceSession>, String> {
+pub fn get_attendance_sessions(state: State<DbState>, class_id: String) -> Result<Vec<AttendanceSession>, String> {
     let conn = get_conn(&state);
     let mut stmt = conn
-        .prepare(
-            "SELECT id, class_id, date, created_at FROM attendance_sessions WHERE class_id = ?1 ORDER BY date DESC",
-        )
-        .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map(params![class_id], |row| {
-            Ok(AttendanceSession {
-                id: row.get(0)?,
-                class_id: row.get(1)?,
-                date: row.get(2)?,
-                created_at: row.get(3)?,
-            })
-        })
-        .map_err(|e| e.to_string())?;
-    rows.collect::<SqlResult<Vec<AttendanceSession>>>().map_err(|e| e.to_string())
+        .prepare("SELECT id, class_id, date, created_at FROM attendance_sessions WHERE class_id = ?1 ORDER BY date DESC")
+        .map_err(e2s)?;
+    let rows = stmt.query_map(params![class_id], row_to_session).map_err(e2s)?;
+    rows.collect::<Result<Vec<AttendanceSession>, _>>().map_err(e2s)
 }
 
 #[tauri::command]
 pub fn delete_attendance_session(state: State<DbState>, id: String) -> Result<(), String> {
     let conn = get_conn(&state);
-    conn.execute("DELETE FROM attendance_sessions WHERE id = ?1", params![id])
-        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM attendance_sessions WHERE id = ?1", params![id]).map_err(e2s)?;
     Ok(())
 }
 
 // ── Attendance Record Commands ──────────────────────────────────────────
 
 #[tauri::command]
-pub fn mark_attendance(
-    state: State<DbState>,
-    session_id: String,
-    student_id: String,
-    status: String,
-) -> Result<(), String> {
+pub fn mark_attendance(state: State<DbState>, session_id: String, student_id: String, status: String) -> Result<(), String> {
     if status != "present" && status != "absent" {
         return Err("Status must be 'present' or 'absent'".to_string());
     }
@@ -370,41 +359,32 @@ pub fn mark_attendance(
         "INSERT INTO attendance_records (id, session_id, student_id, status) VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(session_id, student_id) DO UPDATE SET status = ?4",
         params![id, session_id, student_id, status],
-    )
-    .map_err(|e| e.to_string())?;
+    ).map_err(e2s)?;
     Ok(())
 }
 
 #[tauri::command]
 pub fn mark_all_absent(state: State<DbState>, session_id: String, class_id: String) -> Result<(), String> {
     let conn = get_conn(&state);
-    let students: Vec<String> = {
-        let mut stmt = conn
-            .prepare("SELECT id FROM students WHERE class_id = ?1")
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map(params![class_id], |row| row.get(0))
-            .map_err(|e| e.to_string())?;
-        rows.collect::<SqlResult<Vec<String>>>().map_err(|e| e.to_string())?
+    let student_ids: Vec<String> = {
+        let mut stmt = conn.prepare("SELECT id FROM students WHERE class_id = ?1").map_err(e2s)?;
+        let rows = stmt.query_map(params![class_id], |row: &Row| row.get::<_, String>(0)).map_err(e2s)?;
+        rows.collect::<Result<Vec<String>, _>>().map_err(e2s)?
     };
 
-    for student_id in students {
+    for student_id in student_ids {
         let id = Uuid::new_v4().to_string();
         conn.execute(
             "INSERT INTO attendance_records (id, session_id, student_id, status) VALUES (?1, ?2, ?3, 'absent')
              ON CONFLICT(session_id, student_id) DO UPDATE SET status = 'absent'",
             params![id, session_id, student_id],
-        )
-        .map_err(|e| e.to_string())?;
+        ).map_err(e2s)?;
     }
     Ok(())
 }
 
 #[tauri::command]
-pub fn get_attendance_records(
-    state: State<DbState>,
-    session_id: String,
-) -> Result<Vec<AttendanceRecord>, String> {
+pub fn get_attendance_records(state: State<DbState>, session_id: String) -> Result<Vec<AttendanceRecord>, String> {
     let conn = get_conn(&state);
     let mut stmt = conn
         .prepare(
@@ -413,35 +393,18 @@ pub fn get_attendance_records(
              JOIN students s ON s.id = ar.student_id
              WHERE ar.session_id = ?1
              ORDER BY s.roll_number, s.name",
-        )
-        .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map(params![session_id], |row| {
-            Ok(AttendanceRecord {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                student_id: row.get(2)?,
-                student_name: row.get(3)?,
-                roll_number: row.get(4)?,
-                status: row.get(5)?,
-            })
-        })
-        .map_err(|e| e.to_string())?;
-    rows.collect::<SqlResult<Vec<AttendanceRecord>>>().map_err(|e| e.to_string())
+        ).map_err(e2s)?;
+    let rows = stmt.query_map(params![session_id], row_to_record).map_err(e2s)?;
+    rows.collect::<Result<Vec<AttendanceRecord>, _>>().map_err(e2s)
 }
 
 #[tauri::command]
-pub fn get_student_summary(
-    state: State<DbState>,
-    class_id: String,
-) -> Result<Vec<StudentSummary>, String> {
+pub fn get_student_summary(state: State<DbState>, class_id: String) -> Result<Vec<StudentSummary>, String> {
     let conn = get_conn(&state);
     let mut stmt = conn
         .prepare(
             "SELECT
-                s.id,
-                s.name,
-                s.roll_number,
+                s.id, s.name, s.roll_number,
                 COUNT(DISTINCT as2.id) as total_sessions,
                 COUNT(DISTINCT CASE WHEN ar.status = 'present' THEN as2.id END) as present_count
              FROM students s
@@ -450,37 +413,15 @@ pub fn get_student_summary(
              WHERE s.class_id = ?1
              GROUP BY s.id
              ORDER BY s.roll_number, s.name",
-        )
-        .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map(params![class_id], |row| {
-            Ok(StudentSummary {
-                student_id: row.get(0)?,
-                student_name: row.get(1)?,
-                roll_number: row.get(2)?,
-                total_sessions: row.get(3)?,
-                present_count: row.get(4)?,
-            })
-        })
-        .map_err(|e| e.to_string())?;
-    rows.collect::<SqlResult<Vec<StudentSummary>>>().map_err(|e| e.to_string())
+        ).map_err(e2s)?;
+    let rows = stmt.query_map(params![class_id], row_to_summary).map_err(e2s)?;
+    rows.collect::<Result<Vec<StudentSummary>, _>>().map_err(e2s)
 }
 
 // ── Export Commands ─────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
-pub struct ExportRow {
-    pub roll_number: String,
-    pub student_name: String,
-    pub date: String,
-    pub status: String,
-}
-
 #[tauri::command]
-pub fn get_export_data(
-    state: State<DbState>,
-    class_id: String,
-) -> Result<Vec<ExportRow>, String> {
+pub fn get_export_data(state: State<DbState>, class_id: String) -> Result<Vec<ExportRow>, String> {
     let conn = get_conn(&state);
     let mut stmt = conn
         .prepare(
@@ -490,41 +431,18 @@ pub fn get_export_data(
              LEFT JOIN attendance_records ar ON ar.session_id = as2.id AND ar.student_id = s.id
              WHERE s.class_id = ?1
              ORDER BY s.roll_number, s.name, as2.date",
-        )
-        .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map(params![class_id], |row| {
-            Ok(ExportRow {
-                roll_number: row.get(0)?,
-                student_name: row.get(1)?,
-                date: row.get(2)?,
-                status: row.get::<_, Option<String>>(3).unwrap_or_else(|| "not_marked".to_string()),
-            })
-        })
-        .map_err(|e| e.to_string())?;
-    rows.collect::<SqlResult<Vec<ExportRow>>>().map_err(|e| e.to_string())
-}
-
-#[derive(Debug, Serialize)]
-pub struct ExportSummaryRow {
-    pub roll_number: String,
-    pub student_name: String,
-    pub total_sessions: i64,
-    pub present_count: i64,
-    pub percentage: f64,
+        ).map_err(e2s)?;
+    let rows = stmt.query_map(params![class_id], row_to_export).map_err(e2s)?;
+    rows.collect::<Result<Vec<ExportRow>, _>>().map_err(e2s)
 }
 
 #[tauri::command]
-pub fn get_export_summary(
-    state: State<DbState>,
-    class_id: String,
-) -> Result<Vec<ExportSummaryRow>, String> {
+pub fn get_export_summary(state: State<DbState>, class_id: String) -> Result<Vec<ExportSummaryRow>, String> {
     let conn = get_conn(&state);
     let mut stmt = conn
         .prepare(
             "SELECT
-                s.roll_number,
-                s.name,
+                s.roll_number, s.name,
                 COUNT(DISTINCT as2.id) as total_sessions,
                 COUNT(DISTINCT CASE WHEN ar.status = 'present' THEN as2.id END) as present_count,
                 CASE WHEN COUNT(DISTINCT as2.id) > 0
@@ -537,18 +455,7 @@ pub fn get_export_summary(
              WHERE s.class_id = ?1
              GROUP BY s.id
              ORDER BY s.roll_number, s.name",
-        )
-        .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map(params![class_id], |row| {
-            Ok(ExportSummaryRow {
-                roll_number: row.get(0)?,
-                student_name: row.get(1)?,
-                total_sessions: row.get(2)?,
-                present_count: row.get(3)?,
-                percentage: row.get(4)?,
-            })
-        })
-        .map_err(|e| e.to_string())?;
-    rows.collect::<SqlResult<Vec<ExportSummaryRow>>>().map_err(|e| e.to_string())
+        ).map_err(e2s)?;
+    let rows = stmt.query_map(params![class_id], row_to_export_summary).map_err(e2s)?;
+    rows.collect::<Result<Vec<ExportSummaryRow>, _>>().map_err(e2s)
 }

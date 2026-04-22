@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import * as api from '../lib/api';
 import { speakStudentName, repeatStudentName, stopSpeaking, callStudent } from '../lib/voice';
+// Note: speakStudentName and repeatStudentName are used directly in the component for non-voice-input mode and repeat
 import type { Class, Student } from '../types';
 import { format } from 'date-fns';
 

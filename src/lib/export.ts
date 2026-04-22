@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { save } from '@tauri-apps/plugin-dialog';
-import { writeTextFile } from '@tauri-apps/plugin-fs';
+import { writeTextFile, writeFile } from '@tauri-apps/plugin-fs';
 import type { ExportRow, ExportSummaryRow } from '../types';
 
 // ── CSV Export ──────────────────────────────────────────────────────────
@@ -101,7 +101,6 @@ async function saveFile(content: string | ArrayBuffer, defaultName: string, filt
     await writeTextFile(filePath, content);
   } else {
     const uint8 = new Uint8Array(content);
-    const { writeFile } = await import('@tauri-apps/plugin-fs');
     await writeFile(filePath, uint8);
   }
   return true;
