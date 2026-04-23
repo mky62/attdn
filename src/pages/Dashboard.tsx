@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { GraduationCap, Users, Mic, BarChart3 } from 'lucide-react';
+import { ArrowRight, BarChart3, GraduationCap, Mic, Users } from 'lucide-react';
 import * as api from '../lib/api';
 import type { Class } from '../types';
 
@@ -12,87 +12,134 @@ export default function Dashboard() {
   }, []);
 
   return (
-    <div className="p-6 max-w-5xl">
-      <h2 className="text-2xl font-bold text-gray-900 mb-1">Dashboard</h2>
-      <p className="text-sm text-gray-500 mb-6">Quick overview of your attendance system</p>
-
-      <div className="grid grid-cols-3 gap-4 mb-8">
-        <Link
-          to="/classes"
-          className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-md transition-shadow"
-        >
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
-              <GraduationCap size={20} className="text-primary" />
-            </div>
-            <span className="text-sm font-medium text-gray-600">Classes</span>
-          </div>
-          <p className="text-3xl font-bold text-gray-900">{classes.length}</p>
-        </Link>
-
-        <Link
-          to="/attendance"
-          className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-md transition-shadow"
-        >
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-lg bg-green-50 flex items-center justify-center">
-              <Mic size={20} className="text-success" />
-            </div>
-            <span className="text-sm font-medium text-gray-600">Take Attendance</span>
-          </div>
-          <p className="text-sm text-gray-500">Start voice roll call</p>
-        </Link>
-
-        <Link
-          to="/summary"
-          className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-md transition-shadow"
-        >
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-lg bg-purple-50 flex items-center justify-center">
-              <BarChart3 size={20} className="text-purple-600" />
-            </div>
-            <span className="text-sm font-medium text-gray-600">Summary</span>
-          </div>
-          <p className="text-sm text-gray-500">View attendance reports</p>
-        </Link>
+    <div className="page-shell">
+      <div className="page-header">
+        <div className="page-copy">
+          <p className="page-kicker">Control Room</p>
+          <h2 className="page-title">Sharper attendance operations.</h2>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <Link to="/attendance" className="action-btn action-btn-primary">
+            <Mic size={16} />
+            Start Session
+          </Link>
+          <Link to="/summary" className="action-btn action-btn-secondary">
+            <BarChart3 size={16} />
+            Open Summary
+          </Link>
+        </div>
       </div>
 
+      <section className="panel px-5 py-5 sm:px-6 sm:py-6">
+        <div className="grid gap-4 lg:grid-cols-[1.4fr_0.9fr]">
+          <div>
+            <h3 className="mt-3 max-w-xl text-3xl font-semibold tracking-[-0.08em] text-surface-dark sm:text-4xl">
+              Attendance
+            </h3>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Link to="/classes" className="action-btn action-btn-primary">
+                <GraduationCap size={16} />
+                Manage Classes
+              </Link>
+              <Link to="/students" className="action-btn action-btn-secondary">
+                <Users size={16} />
+                Edit Rosters
+              </Link>
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+            <div className="metric-card">
+              <p className="metric-label">Classes Loaded</p>
+              <p className="metric-value">{classes.length}</p>
+            </div>
+            <div className="metric-card">
+              <p className="metric-label">System Mode</p>
+              <p className="metric-value text-[1.55rem] sm:text-[1.8rem]">Offline First</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <Link to="/classes" className="metric-card transition-transform hover:-translate-y-1">
+          <div className="flex items-center justify-between">
+            <span className="tag tag-neutral">Classes</span>
+            <GraduationCap size={18} className="text-primary" />
+          </div>
+          <p className="metric-value">{classes.length}</p>
+        </Link>
+
+        <Link to="/students" className="metric-card transition-transform hover:-translate-y-1">
+          <div className="flex items-center justify-between">
+            <span className="tag tag-neutral">Rosters</span>
+            <Users size={18} className="text-primary" />
+          </div>
+          <p className="metric-value text-[1.7rem] sm:text-[2rem]">Student Ops</p>
+        </Link>
+
+        <Link to="/attendance" className="metric-card transition-transform hover:-translate-y-1">
+          <div className="flex items-center justify-between">
+            <span className="tag tag-success">Live</span>
+            <Mic size={18} className="text-success" />
+          </div>
+          <p className="metric-value text-[1.7rem] sm:text-[2rem]">Voice Roll Call</p>
+        </Link>
+
+        <Link to="/summary" className="metric-card transition-transform hover:-translate-y-1">
+          <div className="flex items-center justify-between">
+            <span className="tag tag-warning">Reports</span>
+            <BarChart3 size={18} className="text-warning" />
+          </div>
+          <p className="metric-value text-[1.7rem] sm:text-[2rem]">Exports Ready</p>
+        </Link>
+      </section>
+
       {classes.length === 0 ? (
-        <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
-          <Users size={40} className="mx-auto text-gray-300 mb-3" />
-          <h3 className="text-lg font-semibold text-gray-700 mb-1">Get Started</h3>
-          <p className="text-sm text-gray-500 mb-4">
-            Create your first class to begin taking attendance
-          </p>
-          <Link
-            to="/classes"
-            className="inline-flex items-center gap-2 bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-primary-hover transition-colors"
-          >
+        <section className="mt-5 empty-panel">
+          <Users size={42} className="mx-auto text-[var(--ink-faint)]" />
+          <h3 className="mt-4 text-xl font-medium tracking-[-0.05em] text-surface-dark">
+            No classes yet.
+          </h3>
+          <Link to="/classes" className="action-btn action-btn-primary mt-5">
             <GraduationCap size={16} />
             Create Class
           </Link>
-        </div>
+        </section>
       ) : (
-        <div>
-          <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">
-            Your Classes
-          </h3>
-          <div className="grid grid-cols-2 gap-3">
-            {classes.map((c) => (
+        <section className="mt-5 panel">
+          <div className="flex items-center justify-between border-b border-black/6 px-5 py-4 sm:px-6">
+            <div>
+              <h3 className="text-xl font-semibold tracking-[-0.06em] text-surface-dark">Ready</h3>
+            </div>
+            <Link to="/attendance" className="hidden items-center gap-2 text-sm font-medium text-primary sm:inline-flex">
+              Open Attendance
+              <ArrowRight size={16} />
+            </Link>
+          </div>
+          <div className="grid gap-0 md:grid-cols-2">
+            {classes.map((course) => (
               <Link
-                key={c.id}
-                to={`/attendance?classId=${c.id}`}
-                className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md transition-shadow flex items-center justify-between"
+                key={course.id}
+                to={`/attendance?classId=${course.id}`}
+                className="list-row transition-colors"
               >
                 <div>
-                  <p className="font-semibold text-gray-900">{c.name}</p>
-                  <p className="text-xs text-gray-500">{c.section || 'No section'}</p>
+                  <p className="text-lg font-medium tracking-[-0.04em] text-surface-dark">
+                    {course.name}
+                  </p>
+                  <p className="mt-1 text-sm text-[var(--ink-soft)]">
+                    {course.section || 'No section assigned'}
+                  </p>
                 </div>
-                <Mic size={18} className="text-gray-400" />
+                <div className="flex items-center gap-3">
+                  <span className="tag tag-neutral">Launch</span>
+                  <ArrowRight size={18} className="text-[var(--ink-faint)]" />
+                </div>
               </Link>
             ))}
           </div>
-        </div>
+        </section>
       )}
     </div>
   );

@@ -7,6 +7,8 @@ import {
   History,
   BarChart3,
   Settings,
+  AudioLines,
+  MessageSquare,
 } from 'lucide-react';
 
 const navItems = [
@@ -16,43 +18,50 @@ const navItems = [
   { to: '/attendance', icon: Mic, label: 'Attendance' },
   { to: '/history', icon: History, label: 'History' },
   { to: '/summary', icon: BarChart3, label: 'Summary' },
+  { to: '/assistant', icon: MessageSquare, label: 'Assistant' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 
 export default function Layout() {
   return (
-    <div className="flex h-screen bg-surface">
-      <aside className="w-56 bg-sidebar flex flex-col shrink-0">
-        <div className="px-5 py-5 border-b border-sidebar-hover">
-          <h1 className="text-xl font-bold text-white tracking-tight">Attdn</h1>
-          <p className="text-xs text-sidebar-text mt-0.5">Voice Attendance</p>
-        </div>
-        <nav className="flex-1 py-3 px-2 space-y-0.5">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === '/'}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  isActive
-                    ? 'bg-sidebar-hover text-sidebar-active'
-                    : 'text-sidebar-text hover:bg-sidebar-hover hover:text-sidebar-active'
-                }`
-              }
-            >
-              <item.icon size={18} />
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="px-4 py-3 border-t border-sidebar-hover">
-          <p className="text-[10px] text-sidebar-text">v0.1.0 · Offline First</p>
-        </div>
-      </aside>
-      <main className="flex-1 overflow-auto">
-        <Outlet />
-      </main>
+    <div className="app-shell">
+      <div className="relative flex min-h-screen flex-col lg:flex-row">
+        <aside className="border-b border-white/8 bg-sidebar/95 text-sidebar-active backdrop-blur-xl lg:w-72 lg:border-b-0 lg:border-r">
+          <div className="border-b border-white/8 px-5 py-5 sm:px-6">
+            <div className="flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-white/12 bg-white/8 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.14)]">
+                <AudioLines size={22} />
+              </div>
+              <div>
+                <p className="text-[0.68rem] font-medium uppercase tracking-[0.22em] text-sidebar-text">
+                  Voice Attendance
+                </p>
+                <h1 className="mt-1 text-2xl font-semibold tracking-[-0.08em] text-white">Attdn</h1>
+              </div>
+            </div>
+          </div>
+
+          <nav className="flex gap-2 overflow-x-auto px-4 py-4 lg:flex-col lg:overflow-visible lg:px-5">
+            {navItems.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.to === '/'}
+                className={({ isActive }) => `app-nav-link shrink-0 lg:w-full ${isActive ? 'active' : ''}`}
+              >
+                <item.icon size={18} />
+                <span className="text-sm font-medium tracking-[0.01em]">{item.label}</span>
+              </NavLink>
+            ))}
+          </nav>
+        </aside>
+
+        <main className="flex-1 overflow-auto">
+          <div className="min-h-screen px-4 py-5 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
+            <Outlet />
+          </div>
+        </main>
+      </div>
     </div>
   );
 }

@@ -6,6 +6,7 @@ import Students from './pages/Students';
 import Attendance from './pages/Attendance';
 import History from './pages/History';
 import Summary from './pages/Summary';
+import Assistant from './pages/Assistant';
 import Settings from './pages/Settings';
 
 function App() {
@@ -19,6 +20,7 @@ function App() {
           <Route path="attendance" element={<Attendance />} />
           <Route path="history" element={<History />} />
           <Route path="summary" element={<Summary />} />
+          <Route path="assistant" element={<Assistant />} />
           <Route path="settings" element={<Settings />} />
         </Route>
       </Routes>

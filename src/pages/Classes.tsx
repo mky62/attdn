@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Pencil, Trash2, X, Check } from 'lucide-react';
+import { Check, Pencil, Plus, Trash2, X } from 'lucide-react';
 import * as api from '../lib/api';
 import type { Class } from '../types';
 
@@ -19,6 +19,7 @@ export default function Classes() {
 
   const handleSubmit = async () => {
     if (!name.trim()) return;
+
     setLoading(true);
     try {
       if (editId) {
@@ -31,16 +32,16 @@ export default function Classes() {
       setSection('');
       setShowForm(false);
       load();
-    } catch (e) {
-      console.error(e);
+    } catch (error) {
+      console.error(error);
     }
     setLoading(false);
   };
 
-  const startEdit = (c: Class) => {
-    setEditId(c.id);
-    setName(c.name);
-    setSection(c.section);
+  const startEdit = (currentClass: Class) => {
+    setEditId(currentClass.id);
+    setName(currentClass.name);
+    setSection(currentClass.section);
     setShowForm(true);
   };
 
@@ -58,97 +59,106 @@ export default function Classes() {
   };
 
   return (
-    <div className="p-6 max-w-3xl">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">Classes</h2>
-          <p className="text-sm text-gray-500">Manage your classes and batches</p>
+    <div className="page-shell">
+      <div className="page-header">
+        <div className="page-copy">
+          <p className="page-kicker">Structure</p>
+          <h2 className="page-title">Class architecture.</h2>
         </div>
         {!showForm && (
-          <button
-            onClick={() => setShowForm(true)}
-            className="flex items-center gap-2 bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-primary-hover transition-colors"
-          >
+          <button onClick={() => setShowForm(true)} className="action-btn action-btn-primary">
             <Plus size={16} />
             Add Class
           </button>
         )}
       </div>
 
-      {showForm && (
-        <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4">
-          <div className="flex gap-3 mb-3">
-            <input
-              type="text"
-              placeholder="Class name (e.g. 10th Grade, Batch A)"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
-              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
-              autoFocus
-            />
-            <input
-              type="text"
-              placeholder="Section (optional)"
-              value={section}
-              onChange={(e) => setSection(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
-              className="w-40 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
-            />
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={handleSubmit}
-              disabled={loading || !name.trim()}
-              className="flex items-center gap-1.5 bg-primary text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-hover disabled:opacity-50 transition-colors"
-            >
-              <Check size={14} />
-              {editId ? 'Update' : 'Create'}
-            </button>
-            <button
-              onClick={cancelForm}
-              className="flex items-center gap-1.5 text-gray-600 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-gray-100 transition-colors"
-            >
-              <X size={14} />
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+      <section className="grid gap-5 lg:grid-cols-[0.95fr_1.3fr]">
+        <div className="panel px-5 py-5 sm:px-6">
+          <p className="page-kicker">{editId ? 'Edit Class' : 'New Class'}</p>
+          <h3 className="mt-2 text-2xl font-semibold tracking-[-0.06em] text-surface-dark">
+            {editId ? 'Edit class' : 'New class'}
+          </h3>
 
-      {classes.length === 0 ? (
-        <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
-          <p className="text-gray-500 text-sm">No classes yet. Create your first class above.</p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {classes.map((c) => (
-            <div
-              key={c.id}
-              className="bg-white rounded-xl border border-gray-200 p-4 flex items-center justify-between hover:shadow-sm transition-shadow"
-            >
-              <div>
-                <p className="font-semibold text-gray-900">{c.name}</p>
-                <p className="text-xs text-gray-500">{c.section || 'No section'}</p>
-              </div>
-              <div className="flex gap-1">
+          {showForm ? (
+            <div className="mt-5 grid gap-3">
+              <input
+                type="text"
+                placeholder="Class name"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                onKeyDown={(event) => event.key === 'Enter' && handleSubmit()}
+                className="field"
+                autoFocus
+              />
+              <input
+                type="text"
+                placeholder="Section (optional)"
+                value={section}
+                onChange={(event) => setSection(event.target.value)}
+                onKeyDown={(event) => event.key === 'Enter' && handleSubmit()}
+                className="field"
+              />
+              <div className="mt-2 flex flex-wrap gap-3">
                 <button
-                  onClick={() => startEdit(c)}
-                  className="p-2 text-gray-400 hover:text-primary hover:bg-blue-50 rounded-lg transition-colors"
+                  onClick={handleSubmit}
+                  disabled={loading || !name.trim()}
+                  className="action-btn action-btn-primary"
                 >
-                  <Pencil size={16} />
+                  <Check size={16} />
+                  {editId ? 'Update' : 'Create'}
                 </button>
-                <button
-                  onClick={() => handleDelete(c.id)}
-                  className="p-2 text-gray-400 hover:text-danger hover:bg-red-50 rounded-lg transition-colors"
-                >
-                  <Trash2 size={16} />
+                <button onClick={cancelForm} className="action-btn action-btn-secondary">
+                  <X size={16} />
+                  Cancel
                 </button>
               </div>
             </div>
-          ))}
+          ) : (
+            <div className="mt-6 rounded-2xl border border-dashed border-[var(--line-strong)] bg-white/45 px-4 py-5 text-sm text-[var(--ink-soft)]">
+              Select a class to edit or add a new one.
+            </div>
+          )}
         </div>
-      )}
+
+        <div className="panel">
+          <div className="border-b border-black/6 px-5 py-4 sm:px-6">
+            <p className="page-kicker">Current Classes</p>
+            <h3 className="mt-1 text-2xl font-semibold tracking-[-0.06em] text-surface-dark">
+              {classes.length === 0 ? 'Nothing configured yet.' : `${classes.length} classes ready.`}
+            </h3>
+          </div>
+
+          {classes.length === 0 ? (
+            <div className="empty-panel m-5">
+              <p className="text-base font-medium text-surface-dark">No classes yet.</p>
+            </div>
+          ) : (
+            <div>
+              {classes.map((currentClass) => (
+                <div key={currentClass.id} className="list-row">
+                  <div>
+                    <p className="text-lg font-medium tracking-[-0.04em] text-surface-dark">
+                      {currentClass.name}
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--ink-soft)]">
+                      {currentClass.section || 'No section assigned'}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => startEdit(currentClass)} className="icon-btn">
+                      <Pencil size={16} />
+                    </button>
+                    <button onClick={() => handleDelete(currentClass.id)} className="icon-btn">
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
     </div>
   );
 }

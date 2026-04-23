@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Trash2, ChevronRight } from 'lucide-react';
+import { ChevronRight, Trash2 } from 'lucide-react';
 import * as api from '../lib/api';
-import type { Class, AttendanceSession, AttendanceRecord } from '../types';
+import type { AttendanceRecord, AttendanceSession, Class } from '../types';
 
 export default function History() {
   const [classes, setClasses] = useState<Class[]>([]);
@@ -11,16 +11,15 @@ export default function History() {
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
 
   useEffect(() => {
-    api.getClasses().then((c) => {
-      setClasses(c);
-      if (c.length > 0) setSelectedClassId(c[0].id);
+    api.getClasses().then((loadedClasses) => {
+      setClasses(loadedClasses);
+      if (loadedClasses.length > 0) setSelectedClassId(loadedClasses[0].id);
     });
   }, []);
 
   useEffect(() => {
-    if (selectedClassId) {
-      api.getAttendanceSessions(selectedClassId).then(setSessions).catch(console.error);
-    }
+    if (!selectedClassId) return;
+    api.getAttendanceSessions(selectedClassId).then(setSessions).catch(console.error);
   }, [selectedClassId]);
 
   const loadRecords = async (sessionId: string) => {
@@ -28,13 +27,15 @@ export default function History() {
       setExpandedSessionId(null);
       return;
     }
-    const recs = await api.getAttendanceRecords(sessionId);
-    setRecords(recs);
+
+    const loadedRecords = await api.getAttendanceRecords(sessionId);
+    setRecords(loadedRecords);
     setExpandedSessionId(sessionId);
   };
 
   const handleDeleteSession = async (id: string) => {
     if (!confirm('Delete this attendance session and all its records?')) return;
+
     await api.deleteAttendanceSession(id);
     if (selectedClassId) {
       api.getAttendanceSessions(selectedClassId).then(setSessions);
@@ -45,100 +46,135 @@ export default function History() {
   };
 
   return (
-    <div className="p-6 max-w-3xl">
-      <h2 className="text-2xl font-bold text-gray-900 mb-1">Attendance History</h2>
-      <p className="text-sm text-gray-500 mb-4">View past attendance sessions</p>
-
-      <div className="mb-4">
-        <select
-          value={selectedClassId}
-          onChange={(e) => {
-            setExpandedSessionId(null);
-            setSelectedClassId(e.target.value);
-          }}
-          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary bg-white"
-        >
-          <option value="">Select a class</option>
-          {classes.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name} {c.section ? `— ${c.section}` : ''}
-            </option>
-          ))}
-        </select>
+    <div className="page-shell max-w-5xl">
+      <div className="page-header">
+        <div className="page-copy">
+          <p className="page-kicker">Audit Trail</p>
+          <h2 className="page-title">Attendance History</h2>
+        </div>
       </div>
 
-      {!selectedClassId ? (
-        <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
-          <p className="text-gray-500 text-sm">Select a class to view history</p>
-        </div>
-      ) : sessions.length === 0 ? (
-        <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
-          <p className="text-gray-500 text-sm">No attendance sessions recorded yet</p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {sessions.map((s) => (
-            <div key={s.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <div
-                className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50"
-                onClick={() => loadRecords(s.id)}
-              >
-                <div className="flex items-center gap-3">
-                  <ChevronRight
-                    size={16}
-                    className={`text-gray-400 transition-transform ${
-                      expandedSessionId === s.id ? 'rotate-90' : ''
-                    }`}
-                  />
-                  <div>
-                    <p className="font-medium text-gray-900 text-sm">{s.date}</p>
-                  </div>
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDeleteSession(s.id);
-                  }}
-                  className="p-1.5 text-gray-400 hover:text-danger hover:bg-red-50 rounded transition-colors"
-                >
-                  <Trash2 size={14} />
-                </button>
+      <section className="panel px-5 py-5 sm:px-6">
+        <div className="grid gap-4 md:grid-cols-[1.1fr_0.9fr]">
+          <div>
+            <h3 className="text-2xl font-semibold tracking-[-0.06em] text-surface-dark">History</h3>
+          </div>
+          <div className="grid gap-3">
+            <select
+              value={selectedClassId}
+              onChange={(event) => {
+                setExpandedSessionId(null);
+                setSelectedClassId(event.target.value);
+              }}
+              className="select-field"
+            >
+              <option value="">Select a class</option>
+              {classes.map((currentClass) => (
+                <option key={currentClass.id} value={currentClass.id}>
+                  {currentClass.name} {currentClass.section ? `— ${currentClass.section}` : ''}
+                </option>
+              ))}
+            </select>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="metric-card">
+                <p className="metric-label">Sessions</p>
+                <p className="metric-value">{sessions.length}</p>
               </div>
-              {expandedSessionId === s.id && (
-                <div className="border-t border-gray-100 px-4 py-2">
-                  {records.length === 0 ? (
-                    <p className="text-xs text-gray-400 py-2">No records</p>
-                  ) : (
-                    <div className="divide-y divide-gray-50">
-                      {records.map((r) => (
-                        <div
-                          key={r.id}
-                          className="flex items-center justify-between py-1.5 text-sm"
-                        >
-                          <span className="text-gray-700">
-                            <span className="text-gray-400 mr-2">{r.roll_number}</span>
-                            {r.student_name}
-                          </span>
-                          <span
-                            className={`text-xs font-medium ${
-                              r.status === 'present' ? 'text-success' : 'text-danger'
-                            }`}
-                          >
-                            {r.status === 'present' ? '✓ Present' : '✗ Absent'}
-                          </span>
-                        </div>
-                      ))}
+              <div className="metric-card">
+                <p className="metric-label">Expanded</p>
+                <p className="metric-value text-[1.45rem] sm:text-[1.8rem]">
+                  {expandedSessionId ? 'Open' : 'Closed'}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {!selectedClassId ? (
+        <section className="empty-panel mt-5">
+          <p className="text-base font-medium text-surface-dark">Select a class to view history.</p>
+        </section>
+      ) : sessions.length === 0 ? (
+        <section className="empty-panel mt-5">
+          <p className="text-base font-medium text-surface-dark">No attendance sessions recorded yet.</p>
+        </section>
+      ) : (
+        <section className="mt-5 panel">
+          {sessions.map((session) => {
+            const isExpanded = expandedSessionId === session.id;
+            const presentCount = records.filter((record) => record.status === 'present').length;
+            const absentCount = records.filter((record) => record.status === 'absent').length;
+
+            return (
+              <div key={session.id} className="border-t border-black/6 first:border-t-0">
+                <div
+                  className="flex cursor-pointer flex-col gap-4 px-5 py-4 transition-colors hover:bg-primary/4 sm:flex-row sm:items-center sm:justify-between sm:px-6"
+                  onClick={() => void loadRecords(session.id)}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-black/8 bg-white/70">
+                      <ChevronRight
+                        size={18}
+                        className={`text-[var(--ink-faint)] transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                      />
                     </div>
-                  )}
-                  <div className="pt-2 pb-1 text-xs text-gray-400">
-                    {records.filter((r) => r.status === 'present').length} present ·{' '}
-                    {records.filter((r) => r.status === 'absent').length} absent
+                    <div>
+                      <p className="text-xl font-semibold tracking-[-0.05em] text-surface-dark">{session.date}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    {isExpanded && (
+                      <>
+                        <span className="tag tag-success">{presentCount} present</span>
+                        <span className="tag tag-danger">{absentCount} absent</span>
+                      </>
+                    )}
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handleDeleteSession(session.id);
+                      }}
+                      className="icon-btn"
+                    >
+                      <Trash2 size={15} />
+                    </button>
                   </div>
                 </div>
-              )}
-            </div>
-          ))}
-        </div>
+
+                {isExpanded && (
+                  <div className="border-t border-black/6 bg-white/50 px-5 py-4 sm:px-6">
+                    {records.length === 0 ? (
+                      <p className="text-sm text-[var(--ink-soft)]">No records for this session.</p>
+                    ) : (
+                      <div className="grid gap-2">
+                        {records.map((record) => (
+                          <div
+                            key={record.id}
+                            className="flex flex-col gap-2 rounded-2xl border border-black/6 bg-white/80 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                          >
+                            <div>
+                              <p className="text-base font-medium text-surface-dark">
+                                {record.student_name}
+                              </p>
+                              <p className="mono mt-1 text-xs text-[var(--ink-faint)]">
+                                {record.roll_number || 'No roll number'}
+                              </p>
+                            </div>
+                            <span className={`tag ${record.status === 'present' ? 'tag-success' : 'tag-danger'}`}>
+                              {record.status}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </section>
       )}
     </div>
   );

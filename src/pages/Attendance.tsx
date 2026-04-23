@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
+  CheckCircle2,
   Mic,
   MicOff,
-  SkipForward,
-  RotateCcw,
-  Volume2,
-  VolumeX,
-  CheckCircle2,
-  XCircle,
   Pause,
   Play,
+  RotateCcw,
+  SkipForward,
   Sparkles,
+  Volume2,
+  VolumeX,
+  XCircle,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import * as api from '../lib/api';
@@ -27,6 +27,20 @@ import {
 import type { Class, Student } from '../types';
 
 type SessionState = 'setup' | 'active' | 'paused' | 'complete';
+
+function formatListenFailureMessage(studentName: string, errorMessage: string): string {
+  const normalized = errorMessage.toLowerCase();
+
+  if (
+    normalized.includes('authentication failed')
+    || normalized.includes('not configured')
+    || normalized.includes('api key')
+  ) {
+    return `${errorMessage} Mark ${studentName} manually or update Settings.`;
+  }
+
+  return `${errorMessage} Repeat ${studentName} or mark manually.`;
+}
 
 export default function Attendance() {
   const [searchParams] = useSearchParams();
@@ -97,10 +111,8 @@ export default function Attendance() {
     request.then(setStudents).catch(console.error);
   }, [selectedClassId]);
 
-  useEffect(() => {
-    return () => {
-      stopCurrentInteraction();
-    };
+  useEffect(() => () => {
+    stopCurrentInteraction();
   }, [stopCurrentInteraction]);
 
   const markStudent = useCallback(async (studentId: string, status: 'present' | 'absent') => {
@@ -132,16 +144,20 @@ export default function Attendance() {
     }
 
     const transcriptDetail = result.transcript ? ` Heard: "${result.transcript}".` : '';
-    const sourceLabel = result.mode === 'ai' ? 'AI fallback' : result.mode === 'browser' ? 'browser mic' : 'manual mode';
+    const sourceLabel = result.mode === 'ai'
+      ? 'AI fallback'
+      : result.mode === 'browser'
+        ? 'browser mic'
+        : 'manual mode';
 
     if (result.status === 'present') {
       setStatusMessage(`${student.name} marked present via ${sourceLabel}.${transcriptDetail}`);
     } else if (result.status === 'absent') {
       setStatusMessage(`${student.name} marked absent via ${sourceLabel}.${transcriptDetail}`);
     } else if (result.error) {
-      setStatusMessage(`${result.error} ${student.name} was not advanced. Use Repeat or mark manually.`);
+      setStatusMessage(formatListenFailureMessage(student.name, result.error));
     } else {
-      setStatusMessage(`No clear response for ${student.name}.${transcriptDetail} Use Repeat or mark manually.`);
+      setStatusMessage(`No clear response for ${student.name}.${transcriptDetail} Repeat the name or mark manually.`);
     }
 
     if (result.status !== 'present' && result.status !== 'absent') {
@@ -192,9 +208,7 @@ export default function Attendance() {
     const listener = await callStudent(
       student.name,
       (result) => {
-        if (stepToken !== stepTokenRef.current) {
-          return;
-        }
+        if (stepToken !== stepTokenRef.current) return;
         void handleListenResult(student, result, index + 1);
       },
       silenceTimeout,
@@ -328,10 +342,6 @@ export default function Attendance() {
     }
   };
 
-  const endSession = () => {
-    completeSession();
-  };
-
   const resetSession = () => {
     stopCurrentInteraction();
     setSessionState('setup');
@@ -346,114 +356,139 @@ export default function Attendance() {
   const currentStudent = students[currentIndex];
   const presentCount = Array.from(records.values()).filter((status) => status === 'present').length;
   const absentCount = Array.from(records.values()).filter((status) => status === 'absent').length;
+  const progressWidth = students.length > 0 ? ((currentIndex + 1) / students.length) * 100 : 0;
 
   if (sessionState === 'setup') {
     return (
-      <div className="p-6 max-w-2xl">
-        <h2 className="text-2xl font-bold text-gray-900 mb-1">Take Attendance</h2>
-        <p className="text-sm text-gray-500 mb-6">Start a voice roll call session</p>
-
-        <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Class</label>
-            <select
-              value={selectedClassId}
-              onChange={(event) => setSelectedClassId(event.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary bg-white"
-            >
-              <option value="">Select a class</option>
-              {classes.map((course) => (
-                <option key={course.id} value={course.id}>
-                  {course.name} {course.section ? `— ${course.section}` : ''}
-                </option>
-              ))}
-            </select>
+      <div className="page-shell max-w-5xl">
+        <div className="page-header">
+          <div className="page-copy">
+            <p className="page-kicker">Live Session</p>
+            <h2 className="page-title">Configure the attendance run.</h2>
           </div>
+        </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
-            <input
-              type="date"
-              value={today}
-              readOnly
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-50"
-            />
-          </div>
+        <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
+          <section className="panel px-5 py-5 sm:px-6">
+            <div className="mt-4 grid gap-4">
+              <div>
+                <label className="page-kicker mb-2 block">Class</label>
+                <select
+                  value={selectedClassId}
+                  onChange={(event) => setSelectedClassId(event.target.value)}
+                  className="select-field"
+                >
+                  <option value="">Select a class</option>
+                  {classes.map((course) => (
+                    <option key={course.id} value={course.id}>
+                      {course.name} {course.section ? `— ${course.section}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-          <div className="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-700">
-            <p className="font-medium text-slate-900 mb-1">Listening engines</p>
-            <p>Browser speech recognition: {browserVoiceReady ? 'available' : 'not available'}</p>
-            <p>AI fallback via OpenRouter key: {aiFallbackReady ? 'ready' : 'not configured'}</p>
-          </div>
+              <div>
+                <label className="page-kicker mb-2 block">Date</label>
+                <input type="date" value={today} readOnly className="field" />
+              </div>
 
-          <div className="flex items-center justify-between py-2">
-            <div>
-              <p className="text-sm font-medium text-gray-700">Voice Output (TTS)</p>
-              <p className="text-xs text-gray-500">Read student names aloud</p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <button
+                  onClick={() => setVoiceEnabled((current) => !current)}
+                  className={`flex items-center justify-between rounded-[1.1rem] border px-4 py-4 text-left transition-colors ${
+                    voiceEnabled
+                      ? 'border-primary/20 bg-primary/8'
+                      : 'border-[var(--line)] bg-white/58'
+                  }`}
+                >
+                  <div>
+                    <p className="page-kicker">Voice Output</p>
+                    <p className="mt-1 text-base font-bold tracking-[-0.03em] text-surface-dark">
+                      Text to speech
+                    </p>
+                  </div>
+                  {voiceEnabled ? <Volume2 size={20} className="text-primary" /> : <VolumeX size={20} className="text-[var(--ink-faint)]" />}
+                </button>
+
+                <button
+                  onClick={() => setUseVoiceInput((current) => !current)}
+                  className={`flex items-center justify-between rounded-[1.1rem] border px-4 py-4 text-left transition-colors ${
+                    useVoiceInput
+                      ? 'border-primary/20 bg-primary/8'
+                      : 'border-[var(--line)] bg-white/58'
+                  }`}
+                >
+                  <div>
+                    <p className="page-kicker">Voice Input</p>
+                    <p className="mt-1 text-base font-bold tracking-[-0.03em] text-surface-dark">
+                      Recognition
+                    </p>
+                  </div>
+                  {useVoiceInput ? <Mic size={20} className="text-primary" /> : <MicOff size={20} className="text-[var(--ink-faint)]" />}
+                </button>
+              </div>
+
+              {useVoiceInput && (
+                <div className="rounded-[1.1rem] border border-[var(--line)] bg-white/70 px-4 py-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="page-kicker">Silence Timeout</p>
+                      <p className="mt-1 text-base font-bold tracking-[-0.03em] text-surface-dark">
+                        {(silenceTimeout / 1000).toFixed(1)} seconds
+                      </p>
+                    </div>
+                    <span className="tag tag-neutral">Listening Window</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={2000}
+                    max={8000}
+                    step={500}
+                    value={silenceTimeout}
+                    onChange={(event) => setSilenceTimeout(Number(event.target.value))}
+                    className="mt-4 w-full accent-[var(--accent)]"
+                  />
+                </div>
+              )}
+
+              <button
+                onClick={startSession}
+                disabled={!selectedClassId || students.length === 0}
+                className="action-btn action-btn-primary w-full"
+              >
+                <Mic size={17} />
+                Start Attendance
+              </button>
             </div>
-            <button
-              onClick={() => setVoiceEnabled((current) => !current)}
-              className={`p-2 rounded-lg transition-colors ${
-                voiceEnabled ? 'bg-primary text-white' : 'bg-gray-100 text-gray-400'
-              }`}
-            >
-              {voiceEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
-            </button>
-          </div>
+          </section>
 
-          <div className="flex items-center justify-between py-2">
-            <div>
-              <p className="text-sm font-medium text-gray-700">Voice Input (Recognition)</p>
-              <p className="text-xs text-gray-500">Listen for "present" / "absent"</p>
+          <section className="grid gap-5">
+            <div className="panel px-5 py-5 sm:px-6">
+              <div className="mt-4 grid gap-3">
+                <div className="metric-card">
+                  <p className="metric-label">Browser Recognition</p>
+                  <p className="metric-value text-[1.45rem] sm:text-[1.8rem]">
+                    {browserVoiceReady ? 'Available' : 'Not Ready'}
+                  </p>
+                </div>
+                <div className="metric-card">
+                  <p className="metric-label">AI Fallback</p>
+                  <p className="metric-value text-[1.45rem] sm:text-[1.8rem]">
+                    {aiFallbackReady ? 'Configured' : 'Missing Key'}
+                  </p>
+                </div>
+                <div className="metric-card">
+                  <p className="metric-label">Students In Queue</p>
+                  <p className="metric-value">{students.length}</p>
+                </div>
+              </div>
             </div>
-            <button
-              onClick={() => setUseVoiceInput((current) => !current)}
-              className={`p-2 rounded-lg transition-colors ${
-                useVoiceInput ? 'bg-primary text-white' : 'bg-gray-100 text-gray-400'
-              }`}
-            >
-              {useVoiceInput ? <Mic size={18} /> : <MicOff size={18} />}
-            </button>
-          </div>
 
-          {useVoiceInput && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Silence timeout: {(silenceTimeout / 1000).toFixed(1)}s
-              </label>
-              <input
-                type="range"
-                min={2000}
-                max={8000}
-                step={500}
-                value={silenceTimeout}
-                onChange={(event) => setSilenceTimeout(Number(event.target.value))}
-                className="w-full"
-              />
+            <div className="status-panel">
+              <Sparkles size={18} className="mt-0.5 shrink-0" />
+              <p className="text-sm leading-6">{statusMessage}</p>
             </div>
-          )}
-
-          <button
-            onClick={startSession}
-            disabled={!selectedClassId || students.length === 0}
-            className="w-full bg-primary text-white py-3 rounded-lg text-sm font-semibold hover:bg-primary-hover disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
-          >
-            <Mic size={18} />
-            Start Attendance
-          </button>
-
-          <div className="rounded-xl bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-900">
-            <div className="flex items-start gap-2">
-              <Sparkles size={16} className="mt-0.5 flex-shrink-0" />
-              <p>{statusMessage}</p>
-            </div>
-          </div>
-
-          {students.length === 0 && selectedClassId && (
-            <p className="text-xs text-warning text-center">
-              No students in this class. Add students first.
-            </p>
-          )}
+          </section>
         </div>
       </div>
     );
@@ -461,207 +496,254 @@ export default function Attendance() {
 
   if (sessionState === 'complete') {
     return (
-      <div className="p-6 max-w-2xl">
-        <div className="bg-white rounded-xl border border-gray-200 p-6 text-center">
-          <CheckCircle2 size={48} className="mx-auto text-success mb-3" />
-          <h2 className="text-xl font-bold text-gray-900 mb-1">Attendance Complete</h2>
-          <p className="text-sm text-gray-500 mb-4">{today}</p>
-          {sessionId && <p className="text-xs text-gray-400 mb-4">Session ID: {sessionId}</p>}
-
-          <div className="flex justify-center gap-6 mb-6">
-            <div className="text-center">
-              <p className="text-3xl font-bold text-success">{presentCount}</p>
-              <p className="text-xs text-gray-500">Present</p>
-            </div>
-            <div className="text-center">
-              <p className="text-3xl font-bold text-danger">{absentCount}</p>
-              <p className="text-xs text-gray-500">Absent</p>
-            </div>
-            <div className="text-center">
-              <p className="text-3xl font-bold text-gray-600">{students.length}</p>
-              <p className="text-xs text-gray-500">Total</p>
-            </div>
+      <div className="page-shell max-w-5xl">
+        <div className="page-header">
+          <div className="page-copy">
+            <p className="page-kicker">Run Complete</p>
+            <h2 className="page-title">Attendance captured.</h2>
           </div>
-
-          <div className="rounded-xl bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-900 mb-4">
-            {statusMessage}
-          </div>
-
-          <div className="max-h-60 overflow-auto text-left mb-4">
-            {students.map((student) => (
-              <div
-                key={student.id}
-                className="flex items-center justify-between py-1.5 px-3 text-sm border-b border-gray-100 last:border-0"
-              >
-                <span className="text-gray-700">
-                  {student.roll_number && <span className="text-gray-400 mr-2">{student.roll_number}</span>}
-                  {student.name}
-                </span>
-                <span
-                  className={`font-medium ${
-                    records.get(student.id) === 'present' ? 'text-success' : 'text-danger'
-                  }`}
-                >
-                  {records.get(student.id) === 'present' ? 'Present' : 'Absent'}
-                </span>
-              </div>
-            ))}
-          </div>
-
-          <button
-            onClick={resetSession}
-            className="bg-primary text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-primary-hover transition-colors"
-          >
-            New Session
-          </button>
         </div>
+
+        <section className="panel px-5 py-5 sm:px-6 sm:py-6">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div className="flex h-14 w-14 items-center justify-center rounded-[1.25rem] bg-success/12 text-success">
+                <CheckCircle2 size={30} />
+              </div>
+              <h3 className="mt-4 text-3xl font-semibold tracking-[-0.07em] text-surface-dark">
+                {selectedClass?.name || 'Attendance Session'}
+              </h3>
+              <p className="mt-2 text-sm text-[var(--ink-soft)]">{today}</p>
+              {sessionId && (
+                <p className="mono mt-3 text-xs text-[var(--ink-faint)]">Session ID: {sessionId}</p>
+              )}
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="metric-card">
+                <p className="metric-label">Present</p>
+                <p className="metric-value text-success">{presentCount}</p>
+              </div>
+              <div className="metric-card">
+                <p className="metric-label">Absent</p>
+                <p className="metric-value text-danger">{absentCount}</p>
+              </div>
+              <div className="metric-card">
+                <p className="metric-label">Total</p>
+                <p className="metric-value">{students.length}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="status-panel mt-5">
+            <Sparkles size={18} className="mt-0.5 shrink-0" />
+            <p className="text-sm leading-6">{statusMessage}</p>
+          </div>
+
+          <div className="mt-5 table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th className="w-24">Roll No</th>
+                  <th>Name</th>
+                  <th className="text-right">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {students.map((student) => {
+                  const status = records.get(student.id) === 'present' ? 'present' : 'absent';
+                  return (
+                    <tr key={student.id}>
+                      <td className="mono text-[var(--ink-soft)]">{student.roll_number || '—'}</td>
+                      <td className="font-semibold">{student.name}</td>
+                      <td className="text-right">
+                        <span className={`tag ${status === 'present' ? 'tag-success' : 'tag-danger'}`}>
+                          {status}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mt-5 flex flex-wrap gap-3">
+            <button onClick={resetSession} className="action-btn action-btn-primary">
+              New Session
+            </button>
+          </div>
+        </section>
       </div>
     );
   }
 
   return (
-    <div className="p-6 max-w-3xl h-full flex flex-col">
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h2 className="text-lg font-bold text-gray-900">{selectedClass?.name}</h2>
-          <p className="text-xs text-gray-500">
-            {today} · {currentIndex + 1} / {students.length}
-          </p>
+    <div className="page-shell max-w-6xl">
+      <div className="page-header">
+        <div className="page-copy">
+          <p className="page-kicker">{sessionState === 'paused' ? 'Paused' : 'Active Session'}</p>
+          <h2 className="page-title">{selectedClass?.name || 'Attendance Session'}</h2>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-sm font-semibold text-success">{presentCount} present</span>
-          <span className="text-sm text-gray-400">·</span>
-          <span className="text-sm text-danger">{absentCount} absent</span>
+        <div className="flex flex-wrap gap-3">
+          <span className="tag tag-success">{presentCount} present</span>
+          <span className="tag tag-danger">{absentCount} absent</span>
+          <span className="tag tag-neutral">{sessionState}</span>
         </div>
       </div>
 
-      <div className="w-full bg-gray-200 rounded-full h-1.5 mb-4">
-        <div
-          className="bg-primary h-1.5 rounded-full transition-all"
-          style={{ width: `${students.length > 0 ? ((currentIndex + 1) / students.length) * 100 : 0}%` }}
-        />
-      </div>
-
-      <div className="rounded-xl bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-900 mb-4">
-        {statusMessage}
-      </div>
-
-      {currentStudent && (
-        <div className="bg-white rounded-xl border-2 border-primary/20 p-6 mb-4 flex-shrink-0">
-          <div className="text-center mb-4">
-            {currentStudent.roll_number && (
-              <p className="text-xs text-gray-400 mb-1">Roll #{currentStudent.roll_number}</p>
-            )}
-            <h3 className="text-3xl font-bold text-gray-900">{currentStudent.name}</h3>
-            {isListening && (
-              <div className="flex items-center justify-center gap-2 mt-2">
-                <span className="relative flex h-3 w-3">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-primary" />
-                </span>
-                <span className="text-sm text-primary font-medium">Listening...</span>
+      <div className="grid gap-5 xl:grid-cols-[1.25fr_0.9fr]">
+        <section className="grid gap-5">
+          <div className="panel px-5 py-5 sm:px-6">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-2xl font-semibold tracking-[-0.06em] text-surface-dark">
+                  {today} · {currentIndex + 1} / {students.length}
+                </p>
               </div>
-            )}
-          </div>
-
-          <div className="flex justify-center gap-3">
-            <button
-              onClick={() => void handleManualMark('present')}
-              className={`flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold transition-all ${
-                records.get(currentStudent.id) === 'present'
-                  ? 'bg-success text-white shadow-md'
-                  : 'bg-success-light text-success hover:bg-success hover:text-white'
-              }`}
-            >
-              <CheckCircle2 size={20} />
-              Present
-            </button>
-            <button
-              onClick={() => void handleManualMark('absent')}
-              className={`flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold transition-all ${
-                records.get(currentStudent.id) === 'absent'
-                  ? 'bg-danger text-white shadow-md'
-                  : 'bg-danger-light text-danger hover:bg-danger hover:text-white'
-              }`}
-            >
-              <XCircle size={20} />
-              Absent
-            </button>
-          </div>
-        </div>
-      )}
-
-      <div className="flex items-center justify-center gap-2 mb-4 flex-shrink-0">
-        <button
-          onClick={prevStudent}
-          disabled={currentIndex === 0}
-          className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-30 transition-colors"
-        >
-          <SkipForward size={18} className="rotate-180" />
-        </button>
-        <button
-          onClick={() => void handleRepeat()}
-          disabled={!voiceEnabled}
-          className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-30 transition-colors"
-          title="Repeat name"
-        >
-          <RotateCcw size={18} />
-        </button>
-        <button
-          onClick={togglePause}
-          className="p-3 rounded-xl bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
-        >
-          {sessionState === 'paused' ? <Play size={20} /> : <Pause size={20} />}
-        </button>
-        <button
-          onClick={nextStudent}
-          className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 transition-colors"
-          title="Skip / Next"
-        >
-          <SkipForward size={18} />
-        </button>
-        <button
-          onClick={endSession}
-          className="ml-4 text-xs text-gray-400 hover:text-danger transition-colors"
-        >
-          End Session
-        </button>
-      </div>
-
-      <div className="flex-1 overflow-auto bg-white rounded-xl border border-gray-200">
-        <div className="divide-y divide-gray-100">
-          {students.map((student, index) => (
-            <div
-              key={student.id}
-              className={`flex items-center justify-between px-4 py-2 text-sm ${
-                index === currentIndex ? 'bg-primary-light' : ''
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-gray-400 text-xs w-6">{index + 1}</span>
-                <span className="text-gray-400 text-xs w-12">{student.roll_number}</span>
-                <span className={`font-medium ${index === currentIndex ? 'text-primary' : 'text-gray-800'}`}>
-                  {student.name}
-                </span>
-              </div>
-              <span
-                className={`text-xs font-medium ${
-                  records.get(student.id) === 'present'
-                    ? 'text-success'
-                    : records.get(student.id) === 'absent'
-                      ? 'text-danger'
-                      : 'text-gray-300'
-                }`}
-              >
-                {records.get(student.id) === 'present'
-                  ? '✓ Present'
-                  : records.get(student.id) === 'absent'
-                    ? '✗ Absent'
-                    : '—'}
-              </span>
+              <span className="tag tag-neutral">{Math.round(progressWidth)}%</span>
             </div>
-          ))}
-        </div>
+            <div className="progress-track mt-5">
+              <div className="progress-value" style={{ width: `${progressWidth}%` }} />
+            </div>
+
+            <div className="status-panel mt-5">
+              <Sparkles size={18} className="mt-0.5 shrink-0" />
+              <p className="text-sm leading-6">{statusMessage}</p>
+            </div>
+
+            {currentStudent && (
+              <div className="mt-5 rounded-[1.35rem] border border-primary/16 bg-white/78 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.6)] sm:p-6">
+                <div className="text-center">
+                  {currentStudent.roll_number && (
+                    <p className="mono text-xs uppercase tracking-[0.18em] text-[var(--ink-faint)]">
+                      Roll {currentStudent.roll_number}
+                    </p>
+                  )}
+                  <h3 className="mt-3 text-4xl font-semibold tracking-[-0.09em] text-surface-dark sm:text-5xl">
+                    {currentStudent.name}
+                  </h3>
+                  {isListening && (
+                    <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-primary/16 bg-primary/10 px-4 py-2 text-sm font-semibold text-primary">
+                      <span className="relative flex h-3 w-3">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+                        <span className="relative inline-flex h-3 w-3 rounded-full bg-primary" />
+                      </span>
+                      Listening...
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-6 grid gap-3 sm:grid-cols-2">
+                  <button
+                    onClick={() => void handleManualMark('present')}
+                    className={`action-btn w-full ${
+                      records.get(currentStudent.id) === 'present'
+                        ? 'action-btn-primary'
+                        : 'action-btn-secondary border-success/24 text-success'
+                    }`}
+                  >
+                    <CheckCircle2 size={18} />
+                    Present
+                  </button>
+                  <button
+                    onClick={() => void handleManualMark('absent')}
+                    className={`action-btn w-full ${
+                      records.get(currentStudent.id) === 'absent'
+                        ? 'action-btn-danger'
+                        : 'action-btn-secondary border-danger/24 text-danger'
+                    }`}
+                  >
+                    <XCircle size={18} />
+                    Absent
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-2 sm:justify-between">
+              <div className="flex items-center gap-2">
+                <button onClick={prevStudent} disabled={currentIndex === 0} className="icon-btn">
+                  <SkipForward size={18} className="rotate-180" />
+                </button>
+                <button onClick={() => void handleRepeat()} disabled={!voiceEnabled} className="icon-btn">
+                  <RotateCcw size={18} />
+                </button>
+                <button onClick={togglePause} className="action-btn action-btn-secondary">
+                  {sessionState === 'paused' ? <Play size={16} /> : <Pause size={16} />}
+                  {sessionState === 'paused' ? 'Resume' : 'Pause'}
+                </button>
+                <button onClick={nextStudent} className="icon-btn">
+                  <SkipForward size={18} />
+                </button>
+              </div>
+
+              <button onClick={completeSession} className="action-btn action-btn-danger">
+                End Session
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section className="grid gap-5">
+          <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
+            <div className="metric-card">
+              <p className="metric-label">Current Position</p>
+              <p className="metric-value">{currentIndex + 1}</p>
+            </div>
+            <div className="metric-card">
+              <p className="metric-label">Voice Input</p>
+              <p className="metric-value text-[1.45rem] sm:text-[1.8rem]">
+                {useVoiceInput ? 'On' : 'Manual'}
+              </p>
+            </div>
+            <div className="metric-card">
+              <p className="metric-label">Voice Output</p>
+              <p className="metric-value text-[1.45rem] sm:text-[1.8rem]">
+                {voiceEnabled ? 'On' : 'Muted'}
+              </p>
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="border-b border-black/6 px-5 py-4 sm:px-6">
+              <h3 className="text-2xl font-semibold tracking-[-0.06em] text-surface-dark">Queue</h3>
+            </div>
+
+            <div className="max-h-[34rem] overflow-auto">
+              {students.map((student, index) => {
+                const studentStatus = records.get(student.id);
+                return (
+                  <div
+                    key={student.id}
+                    className={`list-row ${index === currentIndex ? 'bg-primary/6' : ''}`}
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className="mono w-6 text-xs text-[var(--ink-faint)]">{index + 1}</span>
+                      <span className="mono w-14 text-xs text-[var(--ink-faint)]">
+                        {student.roll_number || '—'}
+                      </span>
+                      <span className={`truncate font-semibold ${index === currentIndex ? 'text-primary' : 'text-surface-dark'}`}>
+                        {student.name}
+                      </span>
+                    </div>
+                    <span
+                      className={`tag ${
+                        studentStatus === 'present'
+                          ? 'tag-success'
+                          : studentStatus === 'absent'
+                            ? 'tag-danger'
+                            : 'tag-neutral'
+                      }`}
+                    >
+                      {studentStatus || 'pending'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   );

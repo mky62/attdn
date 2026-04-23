@@ -45,12 +45,20 @@ export function stopSpeaking(): void {
   }
 }
 
+function buildAttendancePrompt(name: string): string {
+  return `${name}, attendance check. Please say present or absent.`;
+}
+
+function buildRepeatAttendancePrompt(name: string): string {
+  return `${name}, I only need present or absent. Please say present or absent.`;
+}
+
 export function speakStudentName(name: string): Promise<void> {
-  return speak(name, 0.85);
+  return speak(buildAttendancePrompt(name), 0.88);
 }
 
 export function repeatStudentName(name: string): Promise<void> {
-  return speak(name, 0.75);
+  return speak(buildRepeatAttendancePrompt(name), 0.82);
 }
 
 // ── Shared Helpers ──────────────────────────────────────────────────────
@@ -148,6 +156,45 @@ function resolveTranscript(content: unknown): string {
     })
     .join(' ')
     .trim();
+}
+
+function extractApiErrorMessage(payloadText: string): string {
+  try {
+    const parsed = JSON.parse(payloadText) as {
+      error?: { message?: unknown };
+      message?: unknown;
+    };
+
+    if (typeof parsed?.error?.message === 'string' && parsed.error.message.trim()) {
+      return parsed.error.message.trim();
+    }
+
+    if (typeof parsed?.message === 'string' && parsed.message.trim()) {
+      return parsed.message.trim();
+    }
+  } catch {
+    // Fall back to the raw text below when the body is not JSON.
+  }
+
+  return payloadText.trim();
+}
+
+function formatAiRequestError(status: number, payloadText: string): string {
+  const apiMessage = extractApiErrorMessage(payloadText);
+
+  if (status === 401 || status === 403) {
+    return 'AI fallback authentication failed. Check the OpenRouter API key in Settings.';
+  }
+
+  if (status === 429) {
+    return 'AI fallback rate limit reached. Try again shortly or mark manually.';
+  }
+
+  if (status >= 500) {
+    return 'AI fallback is temporarily unavailable. Mark manually or try again.';
+  }
+
+  return apiMessage || 'AI recognition request failed.';
 }
 
 async function getOptionalApiKey(): Promise<string | null> {
@@ -448,7 +495,7 @@ async function classifyWithAi(
         {
           role: 'system',
           content:
-            `You are a class attendance assistant acting like a teacher. The expected student name is "${expectedStudentName}". Listen to the audio and decide whether the speaker identifies as that student. Return status "present" only when the spoken response confidently matches the expected student name or clearly confirms presence for that student. Return "absent" only for a clear absence response. Return "unknown" for noise, another name, weak match, or ambiguity. Return "silence" for no speech. Reply exactly in the format "status: <present|absent|unknown|silence>; transcript: <what you heard>".`,
+            `You are a class attendance assistant acting like a teacher. The expected student name is "${expectedStudentName}". Listen to the audio and decide whether the speaker identifies as that student. Do not greet back, do not answer questions, and do not have a conversation. If the speaker says hello, asks a question, chats, or says anything unrelated to attendance, classify it as "unknown" unless they also clearly say present or absent for the expected student. Return status "present" only when the spoken response confidently matches the expected student name or clearly confirms presence for that student. Return "absent" only for a clear absence response. Return "unknown" for noise, another name, weak match, ambiguity, greetings, or questions. Return "silence" for no speech. Reply exactly in the format "status: <present|absent|unknown|silence>; transcript: <what you heard>".`,
         },
         {
           role: 'user',
@@ -471,8 +518,8 @@ async function classifyWithAi(
   });
 
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || 'AI recognition request failed.');
+    const payloadText = await response.text();
+    throw new Error(formatAiRequestError(response.status, payloadText));
   }
 
   const payload = await response.json();
